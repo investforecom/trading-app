@@ -165,6 +165,55 @@ def _load_trades_section(
         seq_counter[group_key] += 1
         row_seq = seq_counter[group_key]
 
+        params = dict(
+            owner_id=owner_id,
+            account_id=account_id,
+            position_id=position_id,
+            close_date=trade_date,
+            open_date=open_datetime,
+            symbol=symbol,
+            underlying=underlying,
+            strategy=strategy,
+            structure=structure,
+            qty=qty,
+            cost_basis=cost_basis,
+            exit_value=exit_value,
+            realized_pnl=realized_pnl,
+            gain_pct=gain_pct,
+            hold_days=hold_days,
+            ibkr_exec_id=ibkr_exec_id,
+            row_seq=row_seq,
+        )
+
+        # Enrich any existing csv/csv_auto row for this trade before attempting INSERT.
+        # csv_auto rows (from pending_closes) have no ibkr_exec_id, so the
+        # ibkr_exec_id ON CONFLICT below would not fire — this UPDATE prevents the
+        # composite-key constraint from triggering on those rows.
+        cur.execute(
+            """
+            UPDATE closed_trades SET
+                ibkr_exec_id = %(ibkr_exec_id)s,
+                cost_basis   = %(cost_basis)s,
+                exit_value   = %(exit_value)s,
+                realized_pnl = %(realized_pnl)s,
+                gain_pct     = %(gain_pct)s,
+                hold_days    = %(hold_days)s,
+                open_date    = COALESCE(%(open_date)s, open_date),
+                source       = 'ibkr_flex'
+            WHERE account_id = %(account_id)s
+              AND close_date  = %(close_date)s
+              AND symbol      = %(symbol)s
+              AND strategy    = %(strategy)s
+              AND row_seq     = %(row_seq)s
+              AND source IN ('csv', 'csv_auto')
+              AND ibkr_exec_id IS NULL
+            """,
+            params,
+        )
+        if cur.rowcount:
+            inserted += 1
+            continue
+
         cur.execute(
             """
             INSERT INTO closed_trades (
@@ -182,25 +231,7 @@ def _load_trades_section(
             )
             ON CONFLICT (ibkr_exec_id) WHERE ibkr_exec_id IS NOT NULL DO NOTHING
             """,
-            dict(
-                owner_id=owner_id,
-                account_id=account_id,
-                position_id=position_id,
-                close_date=trade_date,
-                open_date=open_datetime,
-                symbol=symbol,
-                underlying=underlying,
-                strategy=strategy,
-                structure=structure,
-                qty=qty,
-                cost_basis=cost_basis,
-                exit_value=exit_value,
-                realized_pnl=realized_pnl,
-                gain_pct=gain_pct,
-                hold_days=hold_days,
-                ibkr_exec_id=ibkr_exec_id,
-                row_seq=row_seq,
-            ),
+            params,
         )
         if cur.rowcount:
             inserted += 1
