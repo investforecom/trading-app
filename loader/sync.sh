@@ -3,15 +3,15 @@
 # Pulls the latest trading-routine repo, then runs the loader.
 #
 # Add to crontab (runs at 5:30am Sydney AEST = 19:30 UTC, Mon–Fri):
-#   30 19 * * 1-5 /home/char/dashboard/loader/sync.sh >> /var/log/trading-loader.log 2>&1
+#   30 19 * * 1-5 /home/char/dashboard/loader/sync.sh >> /home/char/logs/trading-loader.log 2>&1
 #
 # During AEDT (UTC+11, Oct–Apr) adjust to:
-#   30 18 * * 1-5 /home/char/dashboard/loader/sync.sh >> /var/log/trading-loader.log 2>&1
+#   30 18 * * 1-5 /home/char/dashboard/loader/sync.sh >> /home/char/logs/trading-loader.log 2>&1
 set -euo pipefail
 
-REPO_DIR="${REPO_DIR:-/home/char/trading-routine}"
+REPO_DIR="${REPO_DIR:-/home/char/workspace/trading-routine}"
 LOADER_DIR="$(cd "$(dirname "$0")" && pwd)"
-ENV_FILE="${ENV_FILE:-/home/char/dashboard/.env}"
+ENV_FILE="${ENV_FILE:-/home/char/workspace/dashboard/.env}"
 
 echo "=== $(date -u '+%Y-%m-%dT%H:%M:%SZ') ==="
 
