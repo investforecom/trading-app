@@ -1,0 +1,28 @@
+# Global options
+{
+    admin off          # disable Caddy admin API on the host
+    email investforecom@gmail.com   # Let's Encrypt contact
+}
+
+# Replace YOUR_DOMAIN before deploying, or set via environment if you prefer.
+# Caddy provisions and renews TLS automatically via Let's Encrypt.
+YOUR_DOMAIN {
+    # Proxy all traffic to Metabase
+    reverse_proxy metabase:3000
+
+    # Security headers
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    # Access log (optional — remove if noisy)
+    log {
+        output file /data/access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}
