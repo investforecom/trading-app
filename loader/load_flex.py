@@ -71,16 +71,73 @@ def _build_structure(asset_class: str, put_call: str, strike: str, expiry: str) 
     return f"{s}{pc} exp {exp_str}"
 
 
-def _derive_strategy_flex(asset_class: str, put_call: str, sub_category: str) -> str:
+def _derive_strategy_flex(
+    asset_class: str,
+    put_call: str,
+    sub_category: str,
+    symbol: str = "",
+    trade_date_str: str = "",
+    expiry_str: str = "",
+    spread_legs: "set[tuple]" = frozenset(),
+) -> str:
     """Best-effort strategy from Flex fields. CSV closed_trades.csv is the authority."""
+    from datetime import datetime
     if asset_class == "STK":
         return "Thematic"
     pc = put_call.strip().upper()
     if pc == "P":
         return "WheelSP"
     if pc == "C":
+        if (symbol, trade_date_str) in spread_legs:
+            # Determine LDS vs SWING by expiry distance
+            try:
+                exp   = datetime.strptime(expiry_str,   "%Y%m%d").date()
+                trade = datetime.strptime(trade_date_str, "%Y%m%d").date()
+                return "LDS" if (exp - trade).days > 365 else "SWING"
+            except (ValueError, TypeError):
+                return "LDS"
         return "LEAP"
     return "other"
+
+
+def _build_spread_legs(rows: list, header: list) -> "set[tuple]":
+    """
+    Pre-pass over EXECUTION close rows.
+    A spread close has both a BUY C and a SELL C on the same
+    (underlying, expiry, trade_date). Returns a set of (symbol, trade_date_str)
+    for every leg that belongs to such a pair — so we can reclassify them
+    as LDS or SWING instead of LEAP.
+    """
+    from collections import defaultdict
+    col = {name: i for i, name in enumerate(header)}
+    groups: dict = defaultdict(lambda: {"buy": [], "sell": []})
+
+    for row in rows:
+        if len(row) != len(header):
+            continue
+        if row[col["LevelOfDetail"]].strip() != "EXECUTION":
+            continue
+        if row[col["Open/CloseIndicator"]].strip() != "C":
+            continue
+        if row[col["Put/Call"]].strip().upper() != "C":
+            continue
+
+        underlying  = row[col["UnderlyingSymbol"]].strip()
+        expiry      = row[col["Expiry"]].strip()
+        trade_date  = row[col["TradeDate"]].strip()
+        buy_sell    = row[col["Buy/Sell"]].strip().upper()
+        symbol      = row[col["Symbol"]].strip()
+
+        key = (underlying, expiry, trade_date)
+        groups[key]["buy" if buy_sell == "BUY" else "sell"].append(symbol)
+
+    spread_legs: set = set()
+    for (underlying, expiry, trade_date), legs in groups.items():
+        if legs["buy"] and legs["sell"]:
+            for sym in legs["buy"] + legs["sell"]:
+                spread_legs.add((sym, trade_date))
+
+    return spread_legs
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +183,7 @@ def _load_trades_section(
     registry: PositionsRegistry,
     seq_counter: dict,
     lot_open_dates: dict,
+    spread_legs: set,
 ) -> tuple[int, int]:
     """Returns (inserted, skipped)."""
     col = {name: i for i, name in enumerate(header)}
@@ -172,7 +230,10 @@ def _load_trades_section(
         exit_value   = parse_decimal(net_cash_raw)
         realized_pnl = parse_decimal(realized_pnl_raw)
         structure    = _build_structure(asset_class, put_call, strike, expiry)
-        strategy     = _derive_strategy_flex(asset_class, put_call, sub_category)
+        strategy     = _derive_strategy_flex(
+            asset_class, put_call, sub_category,
+            symbol, row[col["TradeDate"]].strip(), expiry, spread_legs,
+        )
 
         if realized_pnl is None:
             skipped += 1
@@ -428,6 +489,7 @@ def load(flex_path: Path, account_id: int, owner_id: int):
                 exercises_rows.append(row)
 
     lot_open_dates = _build_lot_open_dates(trades_rows, trades_header) if trades_header else {}
+    spread_legs    = _build_spread_legs(trades_rows, trades_header)    if trades_header else set()
 
     with transaction() as cur:
         registry = PositionsRegistry(cur, owner_id, account_id)
@@ -437,7 +499,7 @@ def load(flex_path: Path, account_id: int, owner_id: int):
         if trades_header:
             t_ins, t_skip = _load_trades_section(
                 trades_rows, trades_header, cur,
-                owner_id, account_id, registry, seq_counter, lot_open_dates,
+                owner_id, account_id, registry, seq_counter, lot_open_dates, spread_legs,
             )
 
         e_ins, e_skip = (0, 0)
