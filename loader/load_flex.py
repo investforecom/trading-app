@@ -275,10 +275,8 @@ def _load_trades_section(
             row_seq=row_seq,
         )
 
-        # Enrich any existing csv/csv_auto row for this trade before attempting INSERT.
-        # csv_auto rows (from pending_closes) have no ibkr_exec_id, so the
-        # ibkr_exec_id ON CONFLICT below would not fire — this UPDATE prevents the
-        # composite-key constraint from triggering on those rows.
+        # Pass 1: exact-match UPDATE — same symbol/date (handles csv rows where the
+        # symbol and close_date match the IBKR format exactly).
         cur.execute(
             """
             UPDATE closed_trades SET
@@ -303,6 +301,46 @@ def _load_trades_section(
         if cur.rowcount:
             inserted += 1
             continue
+
+        # Pass 2: fuzzy UPDATE for csv_auto rows that use a friendly symbol format
+        # and a detection date offset from the actual trade date.
+        # Match on: underlying + strategy + strike/put-call prefix + 7-day date window.
+        # The structure prefix (e.g. "90P", "7.5P") is the first token of the IBKR
+        # structure string and matches the start of the csv_auto structure ("90P short").
+        if asset_class != "STK" and structure:
+            strike_pc = structure.split()[0]  # e.g. "90P", "23.5P", "21C"
+            cur.execute(
+                """
+                UPDATE closed_trades SET
+                    ibkr_exec_id = %(ibkr_exec_id)s,
+                    symbol       = %(symbol)s,
+                    close_date   = %(close_date)s,
+                    cost_basis   = %(cost_basis)s,
+                    exit_value   = %(exit_value)s,
+                    realized_pnl = %(realized_pnl)s,
+                    gain_pct     = %(gain_pct)s,
+                    hold_days    = %(hold_days)s,
+                    open_date    = COALESCE(%(open_date)s, open_date),
+                    source       = 'ibkr_flex'
+                WHERE id = (
+                    SELECT id FROM closed_trades
+                    WHERE account_id  = %(account_id)s
+                      AND underlying   = %(underlying)s
+                      AND strategy     = %(strategy)s
+                      AND source       IN ('csv', 'csv_auto')
+                      AND ibkr_exec_id IS NULL
+                      AND close_date   BETWEEN %(close_date)s - INTERVAL '7 days'
+                                           AND %(close_date)s + INTERVAL '1 day'
+                      AND structure    LIKE %(strike_pc)s || '%%'
+                    ORDER BY ABS(close_date - %(close_date)s)
+                    LIMIT 1
+                )
+                """,
+                {**params, "strike_pc": strike_pc},
+            )
+            if cur.rowcount:
+                inserted += 1
+                continue
 
         cur.execute(
             """
