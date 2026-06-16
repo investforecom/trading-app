@@ -21,6 +21,15 @@ def load(csv_path: Path, account_id: int, owner_id: int):
         registry = PositionsRegistry(cur, owner_id, account_id)
         inserted_snapshots = 0
         skipped = 0
+        auto_closed = 0
+
+        # Remember which symbols were open BEFORE we process this CSV.
+        # Any symbol that was open but absent from the new CSV will be closed
+        # automatically — the routine rewrites the file on every run, so absence
+        # means the position was exited or expired.
+        open_before_csv = set(registry._open.keys())
+        seen_in_csv: set[str] = set()
+        snapshot_date_ref: date | None = None
 
         with open(csv_path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
@@ -46,6 +55,10 @@ def load(csv_path: Path, account_id: int, owner_id: int):
                 if not snapshot_date or not symbol:
                     skipped += 1
                     continue
+
+                seen_in_csv.add(symbol)
+                if snapshot_date_ref is None:
+                    snapshot_date_ref = snapshot_date
 
                 # Ensure the position exists (create if first time we see this symbol)
                 pid = registry.get_or_create(
@@ -95,4 +108,13 @@ def load(csv_path: Path, account_id: int, owner_id: int):
                 else:
                     skipped += 1
 
-        print(f"open_positions: {inserted_snapshots} snapshots inserted, {skipped} skipped")
+        # Close any positions that were open before this run but are absent from
+        # the new CSV. The routine rewrites the file completely each day, so a
+        # missing symbol means the position was exited, expired, or assigned.
+        if snapshot_date_ref:
+            for symbol in open_before_csv - seen_in_csv:
+                registry.close(symbol, snapshot_date_ref)
+                auto_closed += 1
+                print(f"  auto-closed: {symbol} (not in CSV as of {snapshot_date_ref})")
+
+        print(f"open_positions: {inserted_snapshots} snapshots inserted, {skipped} skipped, {auto_closed} auto-closed")

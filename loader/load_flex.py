@@ -190,10 +190,6 @@ def _load_trades_section(
 
         position_id = registry.lookup_any(symbol)
 
-        # Close the open position if tracked
-        if registry.lookup_open(symbol):
-            registry.close(symbol, trade_date)
-
         group_key = (trade_date, symbol, strategy)
         seq_counter[group_key] += 1
         row_seq = seq_counter[group_key]
@@ -343,8 +339,6 @@ def _load_exercises_section(
         ibkr_exec_id = f"EX-{trade_id}" if trade_id else None
 
         position_id = registry.lookup_any(symbol)
-        if registry.lookup_open(symbol):
-            registry.close(symbol, trade_date)
 
         group_key = (trade_date, symbol, strategy)
         seq_counter[group_key] += 1
