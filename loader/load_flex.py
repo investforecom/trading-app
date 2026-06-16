@@ -102,23 +102,23 @@ def _derive_strategy_flex(
     """
     Best-effort strategy from Flex fields. CSV closed_trades.csv is the authority.
 
-    Taxonomy (standardised):
-      LEAP    — single-leg long call; expiry > 12 months from opening date
-      LDS     — two-leg bull call spread; expiry > 12 months from opening date
-      SWING   — single or two-leg technical trade; expiry ≤ 12 months from opening date
-      WheelSP — short put (any duration)
-      WheelSC — short covered call (any duration)
+    Classification order (resolves ambiguity top-down):
+      1. Short option, near-dated → WheelSP (put) / WheelSC (call)
+      2. Two-leg call spread      → LDS if >12mo, SWING (CDS) if ≤12mo
+      3. Single long call         → LEAP if >12mo, SWING if ≤12mo
+      4. Long shares              → 2x-ETF if leveraged ticker, else Thematic
 
-    is_short:      True when the original position was SOLD (short).
-                   EXECUTION rows: Buy/Sell == "BUY" (buying back a short to close)
-                   CLOSED_LOT rows: Quantity < 0 (originally sold short)
-                   LOT rows: Side == "Short"
-    open_date_str: YYYYMMDD opening date of the trade/lot.  Falls back to
-                   trade_date_str (close date) when not provided.
+    Size caps (cost-basis at entry):
+      LEAP / LDS / 2x-ETF: ≤4%   |   Thematic: ≤2%   |   Swing: ~$1k
     """
+    # Long shares of a 2x leveraged ETF — managed like a LEAP, ≤4% size cap.
+    # Short puts / covered calls on these are still WheelSP/WheelSC by option type.
+    _2X_ETF_TICKERS: frozenset = frozenset({
+        "METU", "MSFU", "AMZU", "NOWL", "CRWG", "CRMG", "NVDL", "TSLL", "ADBG",
+    })
     from datetime import datetime
     if asset_class == "STK":
-        return "Thematic"
+        return "2x-ETF" if symbol.strip() in _2X_ETF_TICKERS else "Thematic"
     pc = put_call.strip().upper()
     bs = buy_sell.strip().upper()
 
@@ -694,8 +694,6 @@ def _load_open_lots_section(
         structure   = _build_structure(asset_class, put_call, strike, expiry)
         position_id = registry.lookup_any(symbol)
 
-        # Prefer the strategy already recorded on the position (e.g. 2x-ETF for METU/MSFU)
-        # over the generic flex-field heuristic which can't distinguish 2x-ETF from Thematic.
         open_date_s = open_date.strftime("%Y%m%d")
         # Mask is_short for spread legs — the short upper-strike leg of an open LDS
         # must not be classified as WheelSC. spread_symbols contains all option symbols
@@ -709,7 +707,11 @@ def _load_open_lots_section(
             cur.execute("SELECT strategy FROM positions WHERE id = %s", (position_id,))
             pos_row = cur.fetchone()
             if pos_row:
-                strategy = pos_row["strategy"]
+                pos_strategy = pos_row["strategy"]
+                # Ticker-confirmed 2x-ETF beats a stale Thematic in the positions table.
+                # In every other case the positions table is the authoritative override.
+                if not (strategy == "2x-ETF" and pos_strategy == "Thematic"):
+                    strategy = pos_strategy
 
         cur.execute(
             """
@@ -815,7 +817,6 @@ def _load_closed_lots_section(
             if cost_basis and qty_closed else None
         )
 
-        # Use position-table strategy when available (preserves 2x-ETF, user overrides)
         open_date_s  = open_date.strftime("%Y%m%d")
         trade_date_s = trade_date.strftime("%Y%m%d")
         strategy = _derive_strategy_flex(
@@ -826,7 +827,9 @@ def _load_closed_lots_section(
             cur.execute("SELECT strategy FROM positions WHERE id = %s", (position_id,))
             pos_row = cur.fetchone()
             if pos_row:
-                strategy = pos_row["strategy"]
+                pos_strategy = pos_row["strategy"]
+                if not (strategy == "2x-ETF" and pos_strategy == "Thematic"):
+                    strategy = pos_strategy
 
         # Ensure a lot record exists; for fully-closed lots this creates a skeleton
         # with qty=0 (corrected in the final recompute step below).
