@@ -1,13 +1,14 @@
 """
-Load the IBKR Flex Query CSV → closed_trades (and optionally seeds positions).
+Load the IBKR Flex Query CSV → closed_trades + lots + lot_closes.
 
 The Flex CSV contains multiple sections, each with its own header row.
 We detect section boundaries by looking for rows that start with a known header token.
 
 Sections we care about:
-  - Trades (EXECUTION rows, Open/CloseIndicator = C) → closed_trades
-  - Option Exercises, Assignments and Expirations       → closed_trades
-  - Open Positions (SUMMARY rows)                       → seed positions (optional)
+  - Open Positions (LOT rows)                          → lots
+  - Trades (EXECUTION rows, Open/CloseIndicator = C)  → closed_trades
+  - Trades (CLOSED_LOT rows)                          → lots + lot_closes
+  - Option Exercises, Assignments and Expirations      → closed_trades
 
 The Trades section header starts with "Symbol","UnderlyingSymbol",...
 The Exercises section header starts with "ClientAccountID",...,"Transaction Type",...
@@ -16,12 +17,27 @@ The Open Positions section header starts with "ClientAccountID",...,"MarkPrice",
 import csv
 import io
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from db import transaction
 from util import parse_date_flex, parse_decimal, safe_strategy, derive_underlying
 from positions_registry import PositionsRegistry
+
+
+# ---------------------------------------------------------------------------
+# Datetime helper
+# ---------------------------------------------------------------------------
+
+def _parse_flex_ts(s: str) -> Optional[datetime]:
+    """Parse IBKR datetime string '20260407;053648' → UTC-aware datetime."""
+    if not s or ";" not in s:
+        return None
+    try:
+        return datetime.strptime(s.replace(";", ""), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +504,262 @@ def _load_exercises_section(
 
 
 # ---------------------------------------------------------------------------
+# Open positions LOT section → lots table
+# ---------------------------------------------------------------------------
+
+def _load_open_lots_section(
+    rows: list[list[str]],
+    header: list[str],
+    cur,
+    owner_id: int,
+    account_id: int,
+    registry: PositionsRegistry,
+) -> int:
+    """
+    Upsert open-position LOT rows into the lots table.
+    Sets remaining_qty = qty (full lot); the CLOSED_LOT pass corrects it afterward.
+    Returns number of rows upserted.
+    """
+    col = {name: i for i, name in enumerate(header)}
+    upserted = 0
+
+    for row in rows:
+        if len(row) != len(header):
+            continue
+        if row[col["LevelOfDetail"]].strip() != "LOT":
+            continue
+
+        symbol      = row[col["Symbol"]].strip()
+        underlying  = row[col["UnderlyingSymbol"]].strip() or derive_underlying(symbol)
+        asset_class = row[col["AssetClass"]].strip()
+        put_call    = row[col["Put/Call"]].strip()
+        strike      = row[col["Strike"]].strip()
+        expiry      = row[col["Expiry"]].strip()
+        qty_raw     = row[col["Quantity"]].strip()
+        cpu_raw     = row[col["CostBasisPrice"]].strip()
+        cb_raw      = row[col["CostBasisMoney"]].strip()
+        open_ts_raw = row[col["OpenDateTime"]].strip()
+        orig_order  = row[col["OriginatingOrderID"]].strip() or None
+        orig_txn    = row[col["OriginatingTransactionID"]].strip() or None
+
+        if not symbol or not open_ts_raw:
+            continue
+
+        open_ts = _parse_flex_ts(open_ts_raw)
+        if not open_ts:
+            continue
+
+        qty           = abs(int(float(qty_raw))) if qty_raw else 0
+        cost_per_unit = parse_decimal(cpu_raw)
+        cost_basis    = parse_decimal(cb_raw)
+        if cost_basis is not None:
+            cost_basis = abs(cost_basis)
+        open_date   = open_ts.date()
+        structure   = _build_structure(asset_class, put_call, strike, expiry)
+        strategy    = _derive_strategy_flex(asset_class, put_call, "", symbol, "", expiry)
+        position_id = registry.lookup_any(symbol)
+
+        cur.execute(
+            """
+            INSERT INTO lots (
+                owner_id, account_id, position_id,
+                symbol, underlying, strategy, structure,
+                open_date, open_ts, qty, cost_per_unit, cost_basis, remaining_qty,
+                ibkr_originating_order_id, ibkr_originating_txn_id, source
+            ) VALUES (
+                %(owner_id)s, %(account_id)s, %(position_id)s,
+                %(symbol)s, %(underlying)s, %(strategy)s, %(structure)s,
+                %(open_date)s, %(open_ts)s, %(qty)s, %(cost_per_unit)s, %(cost_basis)s,
+                %(qty)s,
+                %(orig_order)s, %(orig_txn)s, 'ibkr_flex'
+            )
+            ON CONFLICT (account_id, symbol, open_ts) DO UPDATE SET
+                qty           = EXCLUDED.qty,
+                cost_per_unit = EXCLUDED.cost_per_unit,
+                cost_basis    = EXCLUDED.cost_basis,
+                remaining_qty = EXCLUDED.qty,
+                position_id   = COALESCE(lots.position_id, EXCLUDED.position_id),
+                ibkr_originating_order_id = COALESCE(EXCLUDED.ibkr_originating_order_id,
+                                                      lots.ibkr_originating_order_id),
+                ibkr_originating_txn_id   = COALESCE(EXCLUDED.ibkr_originating_txn_id,
+                                                      lots.ibkr_originating_txn_id)
+            """,
+            dict(
+                owner_id=owner_id, account_id=account_id, position_id=position_id,
+                symbol=symbol, underlying=underlying, strategy=strategy, structure=structure,
+                open_date=open_date, open_ts=open_ts,
+                qty=qty, cost_per_unit=cost_per_unit, cost_basis=cost_basis,
+                orig_order=orig_order, orig_txn=orig_txn,
+            ),
+        )
+        upserted += 1
+
+    return upserted
+
+
+# ---------------------------------------------------------------------------
+# Trades CLOSED_LOT rows → lots (skeleton) + lot_closes
+# ---------------------------------------------------------------------------
+
+def _load_closed_lots_section(
+    rows: list[list[str]],
+    header: list[str],
+    cur,
+    owner_id: int,
+    account_id: int,
+    registry: PositionsRegistry,
+) -> int:
+    """
+    Process CLOSED_LOT rows from the Trades section:
+    - Creates skeleton lot records for lots not already present (remaining_qty=0).
+    - Inserts lot_closes records linking to both the lot and the EXECUTION row.
+    - Recomputes lots.qty and lots.remaining_qty for the account after all inserts.
+    Returns number of lot_closes inserted.
+    """
+    col = {name: i for i, name in enumerate(header)}
+    inserted = 0
+
+    for row in rows:
+        if len(row) != len(header):
+            continue
+        if row[col["LevelOfDetail"]].strip() != "CLOSED_LOT":
+            continue
+
+        symbol      = row[col["Symbol"]].strip()
+        underlying  = row[col["UnderlyingSymbol"]].strip() or derive_underlying(symbol)
+        asset_class = row[col["AssetClass"]].strip()
+        put_call    = row[col["Put/Call"]].strip()
+        strike      = row[col["Strike"]].strip()
+        expiry      = row[col["Expiry"]].strip()
+        open_ts_raw = row[col["OpenDateTime"]].strip()
+        trade_date  = parse_date_flex(row[col["TradeDate"]].strip())
+        qty_raw     = row[col["Quantity"]].strip()
+        cb_raw      = row[col["CostBasis"]].strip()
+        pnl_raw     = row[col["FifoPnlRealized"]].strip()
+        order_id    = row[col["IBOrderID"]].strip() or None
+
+        if not symbol or not open_ts_raw or not trade_date:
+            continue
+
+        open_ts = _parse_flex_ts(open_ts_raw)
+        if not open_ts:
+            continue
+
+        qty_closed   = abs(int(float(qty_raw))) if qty_raw else 0
+        cost_basis   = parse_decimal(cb_raw)
+        if cost_basis is not None:
+            cost_basis = abs(cost_basis)
+        realized_pnl = parse_decimal(pnl_raw)
+        open_date    = open_ts.date()
+        hold_days    = (trade_date - open_date).days
+        structure    = _build_structure(asset_class, put_call, strike, expiry)
+        strategy     = _derive_strategy_flex(asset_class, put_call, "", symbol, "", expiry)
+        position_id  = registry.lookup_any(symbol)
+        cost_per_unit = (
+            round(float(cost_basis) / qty_closed, 6)
+            if cost_basis and qty_closed else None
+        )
+
+        # Ensure a lot record exists; for fully-closed lots this creates a skeleton
+        # with qty=0 (corrected in the final recompute step below).
+        cur.execute(
+            """
+            INSERT INTO lots (
+                owner_id, account_id, position_id,
+                symbol, underlying, strategy, structure,
+                open_date, open_ts, qty, cost_per_unit, cost_basis, remaining_qty,
+                source
+            ) VALUES (
+                %(owner_id)s, %(account_id)s, %(position_id)s,
+                %(symbol)s, %(underlying)s, %(strategy)s, %(structure)s,
+                %(open_date)s, %(open_ts)s, 0, %(cost_per_unit)s, %(cost_basis)s,
+                0, 'ibkr_flex'
+            )
+            ON CONFLICT (account_id, symbol, open_ts) DO NOTHING
+            """,
+            dict(
+                owner_id=owner_id, account_id=account_id, position_id=position_id,
+                symbol=symbol, underlying=underlying, strategy=strategy, structure=structure,
+                open_date=open_date, open_ts=open_ts,
+                cost_per_unit=cost_per_unit, cost_basis=cost_basis,
+            ),
+        )
+
+        cur.execute(
+            "SELECT id FROM lots WHERE account_id = %s AND symbol = %s AND open_ts = %s",
+            (account_id, symbol, open_ts),
+        )
+        lot_row = cur.fetchone()
+        if not lot_row:
+            continue
+        lot_id = lot_row["id"]
+
+        # Link to the EXECUTION row in closed_trades (same symbol + close date)
+        cur.execute(
+            """
+            SELECT id FROM closed_trades
+            WHERE account_id = %s AND symbol = %s AND close_date = %s
+            ORDER BY id LIMIT 1
+            """,
+            (account_id, symbol, trade_date),
+        )
+        ct_row = cur.fetchone()
+        closed_trade_id = ct_row["id"] if ct_row else None
+
+        cur.execute(
+            """
+            INSERT INTO lot_closes (
+                lot_id, owner_id, account_id, closed_trade_id,
+                open_date, close_date, qty_closed,
+                cost_basis, realized_pnl, hold_days,
+                ibkr_order_id, source
+            ) VALUES (
+                %(lot_id)s, %(owner_id)s, %(account_id)s, %(closed_trade_id)s,
+                %(open_date)s, %(close_date)s, %(qty_closed)s,
+                %(cost_basis)s, %(realized_pnl)s, %(hold_days)s,
+                %(ibkr_order_id)s, 'ibkr_flex'
+            )
+            ON CONFLICT DO NOTHING
+            """,
+            dict(
+                lot_id=lot_id, owner_id=owner_id, account_id=account_id,
+                closed_trade_id=closed_trade_id,
+                open_date=open_date, close_date=trade_date, qty_closed=qty_closed,
+                cost_basis=cost_basis, realized_pnl=realized_pnl, hold_days=hold_days,
+                ibkr_order_id=order_id,
+            ),
+        )
+        if cur.rowcount:
+            inserted += 1
+
+    # Recompute qty and remaining_qty for all lots in this account.
+    # qty  = remaining_qty (from LOT section, or 0 for skeleton) + total_closed
+    # After this: remaining_qty = qty - total_closed = original remaining_qty ✓
+    cur.execute(
+        """
+        UPDATE lots l
+        SET qty = l.remaining_qty + COALESCE((
+            SELECT SUM(lc.qty_closed) FROM lot_closes lc WHERE lc.lot_id = l.id
+        ), 0)
+        WHERE l.account_id = %s
+        """,
+        (account_id,),
+    )
+    cur.execute(
+        """
+        UPDATE lots l
+        SET remaining_qty = l.qty - COALESCE((
+            SELECT SUM(lc.qty_closed) FROM lot_closes lc WHERE lc.lot_id = l.id
+        ), 0)
+        WHERE l.account_id = %s
+        """,
+        (account_id,),
+    )
+
+    return inserted
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -497,14 +769,16 @@ def load(flex_path: Path, account_id: int, owner_id: int):
     Sections are split by detecting header rows mid-file.
     """
     # Split the file into labelled sections
-    trades_header: Optional[list[str]]    = None
-    trades_rows:   list[list[str]]        = []
-    exercises_header: Optional[list[str]] = None
-    exercises_rows:   list[list[str]]     = []
+    trades_header: Optional[list[str]]       = None
+    trades_rows:   list[list[str]]           = []
+    exercises_header: Optional[list[str]]    = None
+    exercises_rows:   list[list[str]]        = []
+    open_pos_header: Optional[list[str]]     = None
+    open_pos_rows:   list[list[str]]         = []
 
     with open(flex_path, newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
-        current = None  # "trades" | "exercises" | None
+        current = None  # "trades" | "exercises" | "open_positions" | None
 
         for raw_row in reader:
             row = [c.strip() for c in raw_row]
@@ -518,13 +792,16 @@ def load(flex_path: Path, account_id: int, owner_id: int):
                 current = "exercises"
                 continue
             if _is_open_positions_header(row):
-                current = None  # we don't load open positions from Flex
+                open_pos_header = row
+                current = "open_positions"
                 continue
 
             if current == "trades":
                 trades_rows.append(row)
             elif current == "exercises":
                 exercises_rows.append(row)
+            elif current == "open_positions":
+                open_pos_rows.append(row)
 
     lot_open_dates = _build_lot_open_dates(trades_rows, trades_header) if trades_header else {}
     spread_legs    = _build_spread_legs(trades_rows, trades_header)    if trades_header else set()
@@ -533,6 +810,7 @@ def load(flex_path: Path, account_id: int, owner_id: int):
         registry = PositionsRegistry(cur, owner_id, account_id)
         seq_counter: dict[tuple, int] = defaultdict(int)
 
+        # 1. Close trades (EXECUTION rows) — must run before lot_closes links to them
         t_ins, t_skip = (0, 0)
         if trades_header:
             t_ins, t_skip = _load_trades_section(
@@ -540,6 +818,7 @@ def load(flex_path: Path, account_id: int, owner_id: int):
                 owner_id, account_id, registry, seq_counter, lot_open_dates, spread_legs,
             )
 
+        # 2. Exercises / assignments / expirations
         e_ins, e_skip = (0, 0)
         if exercises_header:
             e_ins, e_skip = _load_exercises_section(
@@ -547,7 +826,23 @@ def load(flex_path: Path, account_id: int, owner_id: int):
                 owner_id, account_id, registry, seq_counter,
             )
 
+        # 3. Open lots from the Open Positions LOT rows
+        ol_ins = 0
+        if open_pos_header:
+            ol_ins = _load_open_lots_section(
+                open_pos_rows, open_pos_header, cur, owner_id, account_id, registry,
+            )
+
+        # 4. Closed lots from CLOSED_LOT rows (skeleton lots + lot_closes); links to closed_trades
+        cl_ins = 0
+        if trades_header:
+            cl_ins = _load_closed_lots_section(
+                trades_rows, trades_header, cur, owner_id, account_id, registry,
+            )
+
     print(
         f"flex trades:    {t_ins} inserted, {t_skip} skipped\n"
-        f"flex exercises: {e_ins} inserted, {e_skip} skipped"
+        f"flex exercises: {e_ins} inserted, {e_skip} skipped\n"
+        f"open lots:      {ol_ins} upserted\n"
+        f"lot closes:     {cl_ins} inserted"
     )
