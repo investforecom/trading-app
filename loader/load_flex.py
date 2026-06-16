@@ -84,6 +84,36 @@ def _derive_strategy_flex(asset_class: str, put_call: str, sub_category: str) ->
 
 
 # ---------------------------------------------------------------------------
+# CLOSED_LOT pre-pass — extract earliest open date per (symbol, trade_date)
+# ---------------------------------------------------------------------------
+
+def _build_lot_open_dates(rows: list[list[str]], header: list[str]) -> dict:
+    """
+    EXECUTION rows in the flex file have empty OpenDateTime.
+    CLOSED_LOT rows carry the actual lot open date but no IBExecID.
+    Link key: (symbol, trade_date) — same symbol closed on the same day.
+    Returns earliest open date per key so _load_trades_section can compute hold_days.
+    """
+    col = {name: i for i, name in enumerate(header)}
+    lot_dates: dict[tuple, object] = {}
+
+    for row in rows:
+        if len(row) != len(header):
+            continue
+        if row[col["LevelOfDetail"]].strip() != "CLOSED_LOT":
+            continue
+        symbol     = row[col["Symbol"]].strip()
+        trade_date = parse_date_flex(row[col["TradeDate"]])
+        open_date  = parse_date_flex(row[col["OpenDateTime"]])
+        if symbol and trade_date and open_date:
+            key = (symbol, trade_date)
+            if key not in lot_dates or open_date < lot_dates[key]:
+                lot_dates[key] = open_date
+
+    return lot_dates
+
+
+# ---------------------------------------------------------------------------
 # Trades section loader (EXECUTION close rows)
 # ---------------------------------------------------------------------------
 
@@ -95,6 +125,7 @@ def _load_trades_section(
     account_id: int,
     registry: PositionsRegistry,
     seq_counter: dict,
+    lot_open_dates: dict,
 ) -> tuple[int, int]:
     """Returns (inserted, skipped)."""
     col = {name: i for i, name in enumerate(header)}
@@ -151,9 +182,11 @@ def _load_trades_section(
         if cost_basis and cost_basis != 0:
             gain_pct = round((realized_pnl / abs(cost_basis)) * 100, 4)
 
+        # OpenDateTime is empty on EXECUTION rows — use earliest lot open date instead
+        lot_open = lot_open_dates.get((symbol, trade_date))
         hold_days: Optional[int] = None
-        if open_datetime and trade_date:
-            hold_days = (trade_date - open_datetime).days
+        if lot_open and trade_date:
+            hold_days = (trade_date - lot_open).days
 
         position_id = registry.lookup_any(symbol)
 
@@ -400,6 +433,8 @@ def load(flex_path: Path, account_id: int, owner_id: int):
             elif current == "exercises":
                 exercises_rows.append(row)
 
+    lot_open_dates = _build_lot_open_dates(trades_rows, trades_header) if trades_header else {}
+
     with transaction() as cur:
         registry = PositionsRegistry(cur, owner_id, account_id)
         seq_counter: dict[tuple, int] = defaultdict(int)
@@ -408,7 +443,7 @@ def load(flex_path: Path, account_id: int, owner_id: int):
         if trades_header:
             t_ins, t_skip = _load_trades_section(
                 trades_rows, trades_header, cur,
-                owner_id, account_id, registry, seq_counter,
+                owner_id, account_id, registry, seq_counter, lot_open_dates,
             )
 
         e_ins, e_skip = (0, 0)
