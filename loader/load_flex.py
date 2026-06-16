@@ -95,24 +95,64 @@ def _derive_strategy_flex(
     trade_date_str: str = "",
     expiry_str: str = "",
     spread_legs: "set[tuple]" = frozenset(),
+    buy_sell: str = "",
+    open_date_str: str = "",
+    is_short: bool = False,
 ) -> str:
-    """Best-effort strategy from Flex fields. CSV closed_trades.csv is the authority."""
+    """
+    Best-effort strategy from Flex fields. CSV closed_trades.csv is the authority.
+
+    Taxonomy (standardised):
+      LEAP    — single-leg long call; expiry > 12 months from opening date
+      LDS     — two-leg bull call spread; expiry > 12 months from opening date
+      SWING   — single or two-leg technical trade; expiry ≤ 12 months from opening date
+      WheelSP — short put (any duration)
+      WheelSC — short covered call (any duration)
+
+    is_short:      True when the original position was SOLD (short).
+                   EXECUTION rows: Buy/Sell == "BUY" (buying back a short to close)
+                   CLOSED_LOT rows: Quantity < 0 (originally sold short)
+                   LOT rows: Side == "Short"
+    open_date_str: YYYYMMDD opening date of the trade/lot.  Falls back to
+                   trade_date_str (close date) when not provided.
+    """
     from datetime import datetime
     if asset_class == "STK":
         return "Thematic"
     pc = put_call.strip().upper()
+    bs = buy_sell.strip().upper()
+
     if pc == "P":
         return "WheelSP"
+
     if pc == "C":
-        if (symbol, trade_date_str) in spread_legs:
-            # Determine LDS vs SWING by expiry distance
+        # Compute duration first — needed for all branches below
+        ref_str = open_date_str if open_date_str else trade_date_str
+        long_dated = False
+        if ref_str and expiry_str:
             try:
-                exp   = datetime.strptime(expiry_str,   "%Y%m%d").date()
-                trade = datetime.strptime(trade_date_str, "%Y%m%d").date()
-                return "LDS" if (exp - trade).days > 365 else "SWING"
+                exp = datetime.strptime(expiry_str, "%Y%m%d").date()
+                ref = datetime.strptime(ref_str,    "%Y%m%d").date()
+                long_dated = (exp - ref).days > 365
             except (ValueError, TypeError):
-                return "LDS"
-        return "LEAP"
+                long_dated = True  # assume long-dated on parse failure
+
+        # Spread check must come first — a short upper-strike leg in a spread is
+        # LDS/SWING, not WheelSC.  spread_legs is only populated for EXECUTION rows;
+        # for LOT/CLOSED_LOT rows it is always empty, so this branch is a no-op there.
+        if (symbol, trade_date_str) in spread_legs:
+            return "LDS" if long_dated else "SWING"
+
+        # Short standalone call = covered call (WheelSC), regardless of duration.
+        # is_short is only passed from EXECUTION rows (via buy_sell direction); it is
+        # False for LOT/CLOSED_LOT rows where we can't distinguish WheelSC from spread
+        # upper-strike legs without the paired-leg context.
+        if bs == "BUY" or is_short:
+            return "WheelSC"
+
+        # Single-leg long call
+        return "LEAP" if long_dated else "SWING"
+
     return "other"
 
 
@@ -154,6 +194,83 @@ def _build_spread_legs(rows: list, header: list) -> "set[tuple]":
                 spread_legs.add((sym, trade_date))
 
     return spread_legs
+
+
+def _build_spread_legs_closed_lots(rows: list, header: list) -> "set[tuple]":
+    """
+    Pre-pass over CLOSED_LOT rows to find spread closes.
+    A spread close has both a long (positive qty) and short (negative qty) call
+    on the same (underlying, expiry, trade_date). Returns a set of
+    (symbol, trade_date_str) keyed by TradeDate — matching the trade_date_str
+    passed to _derive_strategy_flex from the CLOSED_LOT path.
+    """
+    col = {name: i for i, name in enumerate(header)}
+    groups: dict = defaultdict(lambda: {"long": [], "short": []})
+
+    for row in rows:
+        if len(row) != len(header):
+            continue
+        if row[col["LevelOfDetail"]].strip() != "CLOSED_LOT":
+            continue
+        if row[col["Put/Call"]].strip().upper() != "C":
+            continue
+        try:
+            qty_f = float(row[col["Quantity"]].strip() or "0")
+        except ValueError:
+            continue
+
+        underlying = row[col["UnderlyingSymbol"]].strip()
+        expiry     = row[col["Expiry"]].strip()
+        trade_date = row[col["TradeDate"]].strip()
+        symbol     = row[col["Symbol"]].strip()
+
+        key = (underlying, expiry, trade_date)
+        bucket = "long" if qty_f > 0 else "short"
+        groups[key][bucket].append((symbol, trade_date))
+
+    spread_legs: set = set()
+    for legs in groups.values():
+        if legs["long"] and legs["short"]:
+            for sym, td in legs["long"] + legs["short"]:
+                spread_legs.add((sym, td))
+
+    return spread_legs
+
+
+def _build_spread_legs_open_lots(rows: list, header: list) -> "set[str]":
+    """
+    Pre-pass over open-position LOT rows to detect open spread positions.
+    A spread has both a Long and a Short call on the same (underlying, expiry).
+    Returns a set of symbol strings for every leg in such a pair.
+    No date in the key — legs may be entered on different days (legged entry).
+    """
+    col = {name: i for i, name in enumerate(header)}
+    groups: dict = defaultdict(lambda: {"long": [], "short": []})
+
+    for row in rows:
+        if len(row) != len(header):
+            continue
+        if row[col["LevelOfDetail"]].strip() != "LOT":
+            continue
+        if row[col["Put/Call"]].strip().upper() != "C":
+            continue
+
+        underlying = row[col["UnderlyingSymbol"]].strip()
+        expiry     = row[col["Expiry"]].strip()
+        side       = row[col["Side"]].strip().upper()
+        symbol     = row[col["Symbol"]].strip()
+
+        key = (underlying, expiry)
+        bucket = "long" if side == "LONG" else "short"
+        groups[key][bucket].append(symbol)
+
+    spread_symbols: set = set()
+    for legs in groups.values():
+        if legs["long"] and legs["short"]:
+            for sym in legs["long"] + legs["short"]:
+                spread_symbols.add(sym)
+
+    return spread_symbols
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +322,14 @@ def _load_trades_section(
     col = {name: i for i, name in enumerate(header)}
     inserted = skipped = 0
 
+    # Pre-load already-imported exec IDs so we can skip them cheaply without
+    # risking a UNIQUE violation in the Pass 2 fuzzy UPDATE.
+    cur.execute(
+        "SELECT ibkr_exec_id FROM closed_trades WHERE account_id = %s AND ibkr_exec_id IS NOT NULL",
+        (account_id,),
+    )
+    existing_exec_ids: set[str] = {r["ibkr_exec_id"] for r in cur.fetchall()}
+
     for row in rows:
         if len(row) != len(header):
             skipped += 1
@@ -222,6 +347,9 @@ def _load_trades_section(
         if not ibkr_exec_id:
             skipped += 1
             continue
+        if ibkr_exec_id in existing_exec_ids:
+            skipped += 1
+            continue
 
         symbol           = row[col["Symbol"]].strip()
         underlying       = row[col["UnderlyingSymbol"]].strip() or derive_underlying(symbol)
@@ -230,6 +358,7 @@ def _load_trades_section(
         put_call         = row[col["Put/Call"]].strip()
         strike           = row[col["Strike"]].strip()
         expiry           = row[col["Expiry"]].strip()
+        buy_sell         = row[col["Buy/Sell"]].strip()
         trade_date       = parse_date_flex(row[col["TradeDate"]])
         open_datetime    = parse_date_flex(row[col["OpenDateTime"]])
         qty_raw          = row[col["Quantity"]].strip()
@@ -246,9 +375,14 @@ def _load_trades_section(
         exit_value   = parse_decimal(net_cash_raw)
         realized_pnl = parse_decimal(realized_pnl_raw)
         structure    = _build_structure(asset_class, put_call, strike, expiry)
+        # Use the lot's actual opening date (from CLOSED_LOT pre-pass) to determine
+        # LEAP/LDS vs SWING; falls back to trade_date (close date) when unavailable.
+        lot_open      = lot_open_dates.get((symbol, trade_date))
+        open_date_str = lot_open.strftime("%Y%m%d") if lot_open else ""
         strategy     = _derive_strategy_flex(
             asset_class, put_call, sub_category,
             symbol, row[col["TradeDate"]].strip(), expiry, spread_legs,
+            buy_sell=buy_sell, open_date_str=open_date_str,
         )
 
         if realized_pnl is None:
@@ -373,7 +507,7 @@ def _load_trades_section(
                 %(cost_basis)s, %(exit_value)s, %(realized_pnl)s, %(gain_pct)s,
                 %(hold_days)s, %(ibkr_exec_id)s, %(row_seq)s, 'ibkr_flex'
             )
-            ON CONFLICT (ibkr_exec_id) WHERE ibkr_exec_id IS NOT NULL DO NOTHING
+            ON CONFLICT (ibkr_exec_id) DO NOTHING
             """,
             params,
         )
@@ -474,7 +608,7 @@ def _load_exercises_section(
                 %(cost_basis)s, %(exit_value)s, %(realized_pnl)s, %(gain_pct)s,
                 %(exit_reason)s, %(ibkr_exec_id)s, %(row_seq)s, 'ibkr_flex'
             )
-            ON CONFLICT (ibkr_exec_id) WHERE ibkr_exec_id IS NOT NULL DO NOTHING
+            ON CONFLICT (ibkr_exec_id) DO NOTHING
             """,
             dict(
                 owner_id=owner_id,
@@ -514,6 +648,7 @@ def _load_open_lots_section(
     owner_id: int,
     account_id: int,
     registry: PositionsRegistry,
+    spread_symbols: "set[str]" = frozenset(),
 ) -> int:
     """
     Upsert open-position LOT rows into the lots table.
@@ -554,10 +689,27 @@ def _load_open_lots_section(
         cost_basis    = parse_decimal(cb_raw)
         if cost_basis is not None:
             cost_basis = abs(cost_basis)
+        side        = row[col["Side"]].strip().upper() if "Side" in col else ""
         open_date   = open_ts.date()
         structure   = _build_structure(asset_class, put_call, strike, expiry)
-        strategy    = _derive_strategy_flex(asset_class, put_call, "", symbol, "", expiry)
         position_id = registry.lookup_any(symbol)
+
+        # Prefer the strategy already recorded on the position (e.g. 2x-ETF for METU/MSFU)
+        # over the generic flex-field heuristic which can't distinguish 2x-ETF from Thematic.
+        open_date_s = open_date.strftime("%Y%m%d")
+        # Mask is_short for spread legs — the short upper-strike leg of an open LDS
+        # must not be classified as WheelSC. spread_symbols contains all option symbols
+        # that are paired (Long+Short C on same underlying+expiry).
+        is_short_lot = (side == "SHORT") and symbol not in spread_symbols
+        strategy = _derive_strategy_flex(
+            asset_class, put_call, "", symbol, open_date_s, expiry,
+            open_date_str=open_date_s, is_short=is_short_lot,
+        )
+        if position_id:
+            cur.execute("SELECT strategy FROM positions WHERE id = %s", (position_id,))
+            pos_row = cur.fetchone()
+            if pos_row:
+                strategy = pos_row["strategy"]
 
         cur.execute(
             """
@@ -575,6 +727,7 @@ def _load_open_lots_section(
             )
             ON CONFLICT (account_id, symbol, open_ts) DO UPDATE SET
                 qty           = EXCLUDED.qty,
+                strategy      = EXCLUDED.strategy,
                 cost_per_unit = EXCLUDED.cost_per_unit,
                 cost_basis    = EXCLUDED.cost_basis,
                 remaining_qty = EXCLUDED.qty,
@@ -608,6 +761,7 @@ def _load_closed_lots_section(
     owner_id: int,
     account_id: int,
     registry: PositionsRegistry,
+    spread_legs: "set[tuple]" = frozenset(),
 ) -> int:
     """
     Process CLOSED_LOT rows from the Trades section:
@@ -645,7 +799,9 @@ def _load_closed_lots_section(
         if not open_ts:
             continue
 
-        qty_closed   = abs(int(float(qty_raw))) if qty_raw else 0
+        qty_raw_f    = float(qty_raw) if qty_raw else 0
+        qty_closed   = abs(int(qty_raw_f))
+        is_short     = qty_raw_f < 0           # negative qty = originally sold (short)
         cost_basis   = parse_decimal(cb_raw)
         if cost_basis is not None:
             cost_basis = abs(cost_basis)
@@ -653,15 +809,28 @@ def _load_closed_lots_section(
         open_date    = open_ts.date()
         hold_days    = (trade_date - open_date).days
         structure    = _build_structure(asset_class, put_call, strike, expiry)
-        strategy     = _derive_strategy_flex(asset_class, put_call, "", symbol, "", expiry)
         position_id  = registry.lookup_any(symbol)
         cost_per_unit = (
             round(float(cost_basis) / qty_closed, 6)
             if cost_basis and qty_closed else None
         )
 
+        # Use position-table strategy when available (preserves 2x-ETF, user overrides)
+        open_date_s  = open_date.strftime("%Y%m%d")
+        trade_date_s = trade_date.strftime("%Y%m%d")
+        strategy = _derive_strategy_flex(
+            asset_class, put_call, "", symbol, trade_date_s, expiry,
+            spread_legs=spread_legs, open_date_str=open_date_s, is_short=is_short,
+        )
+        if position_id:
+            cur.execute("SELECT strategy FROM positions WHERE id = %s", (position_id,))
+            pos_row = cur.fetchone()
+            if pos_row:
+                strategy = pos_row["strategy"]
+
         # Ensure a lot record exists; for fully-closed lots this creates a skeleton
         # with qty=0 (corrected in the final recompute step below).
+        # Update strategy on conflict so classification fixes propagate on re-load.
         cur.execute(
             """
             INSERT INTO lots (
@@ -675,7 +844,8 @@ def _load_closed_lots_section(
                 %(open_date)s, %(open_ts)s, 0, %(cost_per_unit)s, %(cost_basis)s,
                 0, 'ibkr_flex'
             )
-            ON CONFLICT (account_id, symbol, open_ts) DO NOTHING
+            ON CONFLICT (account_id, symbol, open_ts) DO UPDATE SET
+                strategy = EXCLUDED.strategy
             """,
             dict(
                 owner_id=owner_id, account_id=account_id, position_id=position_id,
@@ -803,8 +973,10 @@ def load(flex_path: Path, account_id: int, owner_id: int):
             elif current == "open_positions":
                 open_pos_rows.append(row)
 
-    lot_open_dates = _build_lot_open_dates(trades_rows, trades_header) if trades_header else {}
-    spread_legs    = _build_spread_legs(trades_rows, trades_header)    if trades_header else set()
+    lot_open_dates         = _build_lot_open_dates(trades_rows, trades_header)           if trades_header    else {}
+    spread_legs            = _build_spread_legs(trades_rows, trades_header)              if trades_header    else set()
+    closed_lot_spread_legs = _build_spread_legs_closed_lots(trades_rows, trades_header)  if trades_header    else set()
+    open_lot_spread_syms   = _build_spread_legs_open_lots(open_pos_rows, open_pos_header) if open_pos_header else set()
 
     with transaction() as cur:
         registry = PositionsRegistry(cur, owner_id, account_id)
@@ -831,6 +1003,7 @@ def load(flex_path: Path, account_id: int, owner_id: int):
         if open_pos_header:
             ol_ins = _load_open_lots_section(
                 open_pos_rows, open_pos_header, cur, owner_id, account_id, registry,
+                spread_symbols=open_lot_spread_syms,
             )
 
         # 4. Closed lots from CLOSED_LOT rows (skeleton lots + lot_closes); links to closed_trades
@@ -838,6 +1011,7 @@ def load(flex_path: Path, account_id: int, owner_id: int):
         if trades_header:
             cl_ins = _load_closed_lots_section(
                 trades_rows, trades_header, cur, owner_id, account_id, registry,
+                spread_legs=closed_lot_spread_legs,
             )
 
     print(

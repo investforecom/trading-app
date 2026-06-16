@@ -101,12 +101,20 @@ def main():
         print("  open_positions.csv not found, skipping")
 
     # 5. Flex Query historical backfill (optional)
-    flex_path = Path(args.flex) if args.flex else repo / "history" / "U15760849_20250613_20260612.csv"
-    if flex_path.exists():
+    # Auto-select the flex file with the latest end-date from history/ when --flex not given.
+    if args.flex:
+        flex_path = Path(args.flex)
+    else:
+        candidates = sorted(
+            (repo / "history").glob("U15760849_????????_????????.csv"),
+            key=lambda p: p.stem.split("_")[2],  # sort by end-date field
+        )
+        flex_path = candidates[-1] if candidates else None
+    if flex_path and flex_path.exists():
         print(f"\n→ Flex Query: {flex_path.name}")
         load_flex.load(flex_path, account_id, owner_id)
     else:
-        print(f"\n  Flex file not found at {flex_path}, skipping")
+        print("\n  No Flex file found in history/, skipping")
 
     print("\nDone.")
 

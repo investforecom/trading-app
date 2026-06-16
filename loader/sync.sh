@@ -18,6 +18,44 @@ echo "=== $(date -u '+%Y-%m-%dT%H:%M:%SZ') ==="
 echo "→ Pulling trading-routine repo"
 git -C "$REPO_DIR" pull --rebase origin main
 
+# ---------------------------------------------------------------------------
+# Optional: refresh IBKR Flex report (lots model).
+# Requires FLEX_TOKEN and FLEX_QUERY_ID in .env (never commit these).
+# Set FLEX_TOKEN= to disable. Runs weekly (Saturdays) to avoid hammering IBKR.
+# ---------------------------------------------------------------------------
+if [ -n "${FLEX_TOKEN:-}" ] && [ "$(date +%u)" -eq 6 ]; then
+    echo "→ Downloading IBKR Flex report (query ${FLEX_QUERY_ID:-1357986})"
+    FLEX_QUERY_ID="${FLEX_QUERY_ID:-1357986}"
+    FLEX_DATE=$(date +%Y%m%d)
+    FLEX_START=$(date -d '365 days ago' +%Y%m%d 2>/dev/null || date -v-365d +%Y%m%d)
+    FLEX_OUT="$REPO_DIR/history/U${FLEX_ACCOUNT:-15760849}_${FLEX_START}_${FLEX_DATE}.csv"
+
+    # Step 1: request the report
+    REQUEST_URL="https://gdcdyn.interactivebrokers.com/Universal/servlet/FlexStatementService.SendRequest"
+    REQUEST_RESP=$(curl -s -G "$REQUEST_URL" \
+        --data-urlencode "t=$FLEX_TOKEN" \
+        --data-urlencode "q=$FLEX_QUERY_ID" \
+        --data-urlencode "v=3")
+    REFERENCE_CODE=$(echo "$REQUEST_RESP" | grep -oP '(?<=<ReferenceCode>)[^<]+' || true)
+
+    if [ -z "$REFERENCE_CODE" ]; then
+        echo "  Flex request failed: $REQUEST_RESP"
+    else
+        sleep 10  # IBKR needs time to generate the report
+        # Step 2: download the report
+        GET_URL="https://gdcdyn.interactivebrokers.com/Universal/servlet/FlexStatementService.GetStatement"
+        curl -s -G "$GET_URL" \
+            --data-urlencode "t=$FLEX_TOKEN" \
+            --data-urlencode "q=$REFERENCE_CODE" \
+            --data-urlencode "v=3" \
+            -o "$FLEX_OUT"
+        echo "  Saved to $FLEX_OUT"
+        git -C "$REPO_DIR" add "$FLEX_OUT" && \
+            git -C "$REPO_DIR" commit -m "chore: weekly flex report $FLEX_DATE" && \
+            git -C "$REPO_DIR" push origin main || true
+    fi
+fi
+
 echo "→ Running loader"
 # Source the .env file to get POSTGRES_PASSWORD and related vars
 set -a
