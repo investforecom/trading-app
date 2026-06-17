@@ -101,17 +101,9 @@ FROM daily_briefings
 ORDER BY date DESC LIMIT 1
 """
 
-S["band_status"] = """
+S["free_capital"] = """
 SELECT
-    deployed_pct                                              AS "Deployed %",
-    COALESCE(band_lo::text || ' – ' || band_hi::text, '–')  AS "Target Band",
-    CASE
-        WHEN band_lo IS NULL        THEN 'No band set'
-        WHEN deployed_pct > band_hi THEN 'Above band'
-        WHEN deployed_pct < band_lo THEN 'Below band'
-        ELSE 'In band'
-    END                                                       AS "Status",
-    TO_CHAR(date, 'Mon DD, YYYY')                            AS "As of"
+    ROUND((nav * (1 - eff_lev))::numeric, 0) AS "Free Capital ($)"
 FROM daily_briefings
 ORDER BY date DESC LIMIT 1
 """
@@ -400,7 +392,7 @@ CARDS = [
     ("nav",                  "scalar",  "NAV"),
     ("deployed_pct",         "scalar",  "Deployed %"),
     ("eff_lev",              "scalar",  "Eff Leverage"),
-    ("band_status",          "table",   "Deployment Status"),
+    ("free_capital",         "scalar",  "Free Capital"),
     ("decisions",            "table",   "Today's Decisions"),
     ("flags",                "table",   "Active Flags"),
     ("open_positions",       "table",   "Open Positions"),
@@ -443,6 +435,23 @@ def build(reuse_dashboard=None):
         c = card(name, S[key], display)
         ids[key] = c["id"]
 
+    # 1b ── Apply conditional row formatting to the Flags card
+    print("  Applying flag row colors...")
+    mb("put", f"/card/{ids['flags']}", {
+        "visualization_settings": {
+            "table.column_formatting": [
+                {"columns": ["Type"], "type": "single", "operator": "=",
+                 "value": "HARVEST",      "color": "#74BF4B", "highlight_row": True},
+                {"columns": ["Type"], "type": "single", "operator": "=",
+                 "value": "TRIM",         "color": "#F9CF48", "highlight_row": True},
+                {"columns": ["Type"], "type": "single", "operator": "=",
+                 "value": "THESIS-CHECK", "color": "#F9CF48", "highlight_row": True},
+                {"columns": ["Type"], "type": "single", "operator": "=",
+                 "value": "UNDERWATER",   "color": "#EF8C8C", "highlight_row": True},
+            ]
+        }
+    })
+
     # 2 ── Create or reuse dashboard
     if reuse_dashboard:
         did = reuse_dashboard
@@ -459,64 +468,66 @@ def build(reuse_dashboard=None):
     # ── SECTION 1: TODAY'S BRIEF ──────────────────────────────────────────────
     heading("TODAY'S BRIEF",              row=0,  col=0, sx=24, sy=1)
 
-    # KPI row: NAV · Deployed% · Eff Lev · Band Status
-    place(ids["nav"],          row=1,  col=0,  sx=6, sy=4)
-    place(ids["deployed_pct"], row=1,  col=6,  sx=6, sy=4)
-    place(ids["eff_lev"],      row=1,  col=12, sx=6, sy=4)
-    place(ids["band_status"],  row=1,  col=18, sx=6, sy=4)
+    # KPI row: NAV · Deployed% · Eff Lev · Free Capital
+    place(ids["nav"],           row=1, col=0,  sx=6, sy=4)
+    place(ids["deployed_pct"],  row=1, col=6,  sx=6, sy=4)
+    place(ids["eff_lev"],       row=1, col=12, sx=6, sy=4)
+    place(ids["free_capital"],  row=1, col=18, sx=6, sy=4)
 
-    # Today's Decisions (left) + Active Flags (right)
-    place(ids["decisions"],    row=5,  col=0,  sx=15, sy=9)
-    place(ids["flags"],        row=5,  col=15, sx=9,  sy=9)
+    # Today's Decisions — full width
+    place(ids["decisions"],     row=5,  col=0, sx=24, sy=9)
+
+    # Active Flags — full width, row colors set on the card itself
+    place(ids["flags"],         row=14, col=0, sx=24, sy=9)
 
     # ── SECTION 2: PORTFOLIO ─────────────────────────────────────────────────
-    heading("PORTFOLIO",                  row=14, col=0, sx=24, sy=1)
+    heading("PORTFOLIO",                  row=23, col=0, sx=24, sy=1)
 
     # Open positions table + allocation pie
-    place(ids["open_positions"], row=15, col=0,  sx=17, sy=10)
-    place(ids["allocation"],     row=15, col=17, sx=7,  sy=10)
+    place(ids["open_positions"], row=24, col=0,  sx=17, sy=10)
+    place(ids["allocation"],     row=24, col=17, sx=7,  sy=10)
 
     # NAV history + Deployed vs Band
-    place(ids["nav_history"],       row=25, col=0,  sx=12, sy=8)
-    place(ids["deployed_history"],  row=25, col=12, sx=12, sy=8)
+    place(ids["nav_history"],       row=34, col=0,  sx=12, sy=8)
+    place(ids["deployed_history"],  row=34, col=12, sx=12, sy=8)
 
     # ── SECTION 3: ANALYTICS ─────────────────────────────────────────────────
-    heading("ANALYTICS",                  row=33, col=0, sx=24, sy=1)
+    heading("ANALYTICS",                  row=42, col=0, sx=24, sy=1)
 
     # Analytics KPI row
-    place(ids["ytd_pnl"],       row=34, col=0,  sx=8, sy=4)
-    place(ids["total_trades"],  row=34, col=8,  sx=8, sy=4)
-    place(ids["best_strategy"], row=34, col=16, sx=8, sy=4)
+    place(ids["ytd_pnl"],       row=43, col=0,  sx=8, sy=4)
+    place(ids["total_trades"],  row=43, col=8,  sx=8, sy=4)
+    place(ids["best_strategy"], row=43, col=16, sx=8, sy=4)
 
     # Scorecard + Monthly P&L
-    place(ids["strategy_scorecard"], row=38, col=0,  sx=10, sy=10)
-    place(ids["monthly_pnl"],        row=38, col=10, sx=14, sy=10)
+    place(ids["strategy_scorecard"], row=47, col=0,  sx=10, sy=10)
+    place(ids["monthly_pnl"],        row=47, col=10, sx=14, sy=10)
 
     # P&L by strategy bar
-    place(ids["pnl_by_strategy"],    row=48, col=0,  sx=24, sy=8)
+    place(ids["pnl_by_strategy"],    row=57, col=0,  sx=24, sy=8)
 
     # ── SECTION 4: WHEEL INCOME ───────────────────────────────────────────────
-    heading("WHEEL INCOME",               row=56, col=0, sx=24, sy=1)
+    heading("WHEEL INCOME",               row=65, col=0, sx=24, sy=1)
 
     # Wheel KPI row
-    place(ids["wheel_total_premium"], row=57, col=0,  sx=6, sy=4)
-    place(ids["wheel_win_rate"],      row=57, col=6,  sx=6, sy=4)
-    place(ids["wheel_avg_hold"],      row=57, col=12, sx=6, sy=4)
-    place(ids["wheel_total_trades"],  row=57, col=18, sx=6, sy=4)
+    place(ids["wheel_total_premium"], row=66, col=0,  sx=6, sy=4)
+    place(ids["wheel_win_rate"],      row=66, col=6,  sx=6, sy=4)
+    place(ids["wheel_avg_hold"],      row=66, col=12, sx=6, sy=4)
+    place(ids["wheel_total_trades"],  row=66, col=18, sx=6, sy=4)
 
     # Monthly wheel income bar + open positions + by underlying
-    place(ids["wheel_monthly"],       row=61, col=0,  sx=24, sy=9)
-    place(ids["wheel_open"],          row=70, col=0,  sx=14, sy=8)
-    place(ids["wheel_by_underlying"], row=70, col=14, sx=10, sy=8)
+    place(ids["wheel_monthly"],       row=70, col=0,  sx=24, sy=9)
+    place(ids["wheel_open"],          row=79, col=0,  sx=14, sy=8)
+    place(ids["wheel_by_underlying"], row=79, col=14, sx=10, sy=8)
 
     # ── SECTION 5: RISK & COMPLIANCE ─────────────────────────────────────────
-    heading("RISK & COMPLIANCE",          row=78, col=0, sx=24, sy=1)
+    heading("RISK & COMPLIANCE",          row=87, col=0, sx=24, sy=1)
 
-    place(ids["deployment_vs_band"],   row=79, col=0,  sx=16, sy=9)
-    place(ids["oversized_positions"],  row=79, col=16, sx=8,  sy=9)
+    place(ids["deployment_vs_band"],   row=88, col=0,  sx=16, sy=9)
+    place(ids["oversized_positions"],  row=88, col=16, sx=8,  sy=9)
 
-    place(ids["eff_lev_history"],      row=88, col=0,  sx=12, sy=8)
-    place(ids["flags_trend"],          row=88, col=12, sx=12, sy=8)
+    place(ids["eff_lev_history"],      row=97, col=0,  sx=12, sy=8)
+    place(ids["flags_trend"],          row=97, col=12, sx=12, sy=8)
 
     # 4 ── Push all dashcards to the dashboard in one PUT
     print(f"\nStep 4: Flushing {len(_dashcards)} cards to dashboard {did}...")
