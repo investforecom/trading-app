@@ -3,10 +3,14 @@
 # Runs the morning briefing via claude -p (IBKR MCP available headlessly),
 # then immediately loads the output into Postgres so Metabase is live.
 #
-# Cron (5am AEST = 19:00 UTC, Tue–Sat):
-#   0 19 * * 2-6 /home/char/workspace/dashboard/routine_a.sh >> /home/char/logs/routine_a.log 2>&1
+# Cron (6:05am AEST = 20:05 UTC, Tue–Sat — 5 min after US EDT market close):
+#   5 20 * * 2-6 /home/char/workspace/dashboard/routine_a.sh >> /home/char/logs/routine_a.log 2>&1
 #
-# sync.sh remains at 19:30 UTC as a fallback (idempotent loader run — safe to double-run).
+# Seasonal adjustment needed when clocks change:
+#   US EST (Nov–Mar): US close shifts to 21:00 UTC → change to: 5 21 * * 2-6
+#   AEDT (Oct–Apr, UTC+11): 6:05 AM AEDT = 19:05 UTC → change to: 5 19 * * 2-6
+#
+# sync.sh fallback at 20:30 UTC (idempotent — safe to double-run).
 set -euo pipefail
 
 REPO_DIR="/home/char/workspace/trading-routine"
