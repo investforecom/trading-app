@@ -116,9 +116,13 @@ def _derive_strategy_flex(
     _2X_ETF_TICKERS: frozenset = frozenset({
         "METU", "MSFU", "AMZU", "NOWL", "CRWG", "CRMG", "NVDL", "TSLL", "ADBG",
     })
+    _CASH_TICKERS: frozenset = frozenset({"SGOV", "BIL", "USFR", "TBIL"})
     from datetime import datetime
     if asset_class == "STK":
-        return "2x-ETF" if symbol.strip() in _2X_ETF_TICKERS else "Thematic"
+        sym = symbol.strip()
+        if sym in _CASH_TICKERS:
+            return "cash"
+        return "2x-ETF" if sym in _2X_ETF_TICKERS else "Thematic"
     pc = put_call.strip().upper()
     bs = buy_sell.strip().upper()
 
@@ -153,7 +157,8 @@ def _derive_strategy_flex(
         # Single-leg long call
         return "LEAP" if long_dated else "SWING"
 
-    return "other"
+    # CASH asset_class (forex/currency balances) and any unrecognised type
+    return "cash"
 
 
 def _build_spread_legs(rows: list, header: list) -> "set[tuple]":

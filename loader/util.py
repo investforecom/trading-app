@@ -6,7 +6,7 @@ from typing import Optional
 
 STRATEGY_VALUES = {
     "LEAP", "LDS", "SWING", "2x-ETF", "Thematic",
-    "WheelSP", "WheelSC", "PCS", "other",
+    "WheelSP", "WheelSC", "PCS", "cash",
 }
 
 THEME_VALUES = {
@@ -75,7 +75,7 @@ def derive_underlying(symbol: str) -> str:
 
 def safe_strategy(val: str) -> str:
     val = val.strip()
-    return val if val in STRATEGY_VALUES else "other"
+    return val if val in STRATEGY_VALUES else "cash"
 
 
 def safe_theme(val: str) -> Optional[str]:
