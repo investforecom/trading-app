@@ -12,6 +12,7 @@
 #
 # sync.sh fallback at 20:30 UTC (idempotent — safe to double-run).
 set -euo pipefail
+export PATH="/home/char/.local/bin:$PATH"
 
 REPO_DIR="/home/char/workspace/trading-routine"
 LOADER_DIR="/home/char/workspace/dashboard/loader"
