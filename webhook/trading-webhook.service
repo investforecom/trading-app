@@ -1,0 +1,26 @@
+[Unit]
+Description=Trading routine GitHub webhook listener
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=char
+WorkingDirectory=/home/char/workspace/dashboard/webhook
+ExecStart=/usr/bin/python3 /home/char/workspace/dashboard/webhook/webhook_server.py
+Restart=always
+RestartSec=10
+
+# Postgres connection — reads POSTGRES_USER/PASSWORD from .env inside the script
+Environment=PGHOST=127.0.0.1
+Environment=PGPORT=5432
+Environment=PGDATABASE=trading
+Environment=WEBHOOK_PORT=9876
+EnvironmentFile=/home/char/workspace/dashboard/.env
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trading-webhook
+
+[Install]
+WantedBy=multi-user.target

@@ -30,6 +30,7 @@ import load_closed_trades
 import load_pending_closes
 import load_open_positions
 import load_flex
+import load_briefing
 
 
 def resolve_account(cur, ibkr_account_id: str) -> tuple[int, int]:
@@ -115,6 +116,19 @@ def main():
         load_flex.load(flex_path, account_id, owner_id)
     else:
         print("\n  No Flex file found in history/, skipping")
+
+    # 6. Daily briefings — load any not yet in DB (backfill on first run, then incremental)
+    briefing_dir = repo / "briefing_log"
+    if briefing_dir.exists():
+        briefing_files = sorted(briefing_dir.glob("????-??-??.md"))
+        if briefing_files:
+            print(f"\n→ Briefings ({len(briefing_files)} files)")
+            for bf in briefing_files:
+                load_briefing.load(bf, account_id, owner_id)
+        else:
+            print("\n  No briefing files found, skipping")
+    else:
+        print("\n  briefing_log/ not found, skipping")
 
     print("\nDone.")
 
