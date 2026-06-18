@@ -590,7 +590,7 @@ def _discord_post(insights: list[dict], run_date: date) -> None:
         lines.append(f"  ↳ {ins['body']}")
     if not insights:
         lines.append("No issues flagged — all thresholds clear.")
-    lines.append("http://139.99.197.93/dashboard/5")
+    lines.append("http://139.99.197.93/dashboard/5-weekly")
 
     message = "\n".join(lines)
     if len(message) > 1900:
