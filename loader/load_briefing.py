@@ -59,7 +59,8 @@ def _parse_flags(portfolio_block: str) -> list[dict]:
     Lines look like: - **HARVEST · CRWV 98P** note...
     """
     flags = []
-    known_types = {"HARVEST", "UNDERWATER", "TRIM", "THESIS-CHECK", "EXPIRES", "NEW"}
+    known_types = {"HARVEST", "UNDERWATER", "TRIM", "THESIS-CHECK", "EXPIRES", "NEW",
+                   "WHEEL-AT-RISK", "WHEEL-STUCK"}
     for line in portfolio_block.splitlines():
         line = line.strip()
         if not line.startswith("-"):
