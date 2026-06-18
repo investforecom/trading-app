@@ -19,12 +19,29 @@ import requests as _requests
 from db import transaction, fetch_all, fetch_one
 
 ACCOUNT_ID = 1
-MIN_TRADES = 3          # minimum records before generating an insight
-MIN_FLAG_EVENTS = 2     # lower bar for flag-based analyses (data grows over time)
+MIN_TRADES = 3
+MIN_FLAG_EVENTS = 2
 
 SEV_ORDER = {"ACTION": 0, "WATCH": 1, "INFO": 2}
 
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+
+# Strategies where the thesis is multi-year; harvest only at 80%+ and let Thematic run
+LONG_THESIS_STRATEGIES = ("LEAP", "LDS", "2x-ETF")
+HARVEST_THRESHOLD_LONG = 80.0   # % gain — LEAP/LDS/2x-ETF
+# Thematic: no harvest flag; instead flag DCA opportunity when below cost and under 2% cap
+
+
+def _suppressed_underlyings(cur, flag_type: str) -> set[str]:
+    """Return underlyings where flag_type is in suppress_flags and snooze hasn't expired."""
+    rows = _all(cur, """
+        SELECT underlying FROM position_notes
+        WHERE account_id = %s
+          AND active = TRUE
+          AND %s = ANY(suppress_flags)
+          AND (snooze_until IS NULL OR snooze_until >= CURRENT_DATE)
+    """, (ACCOUNT_ID, flag_type))
+    return {r["underlying"] for r in rows}
 
 
 def _jsonable(obj):
@@ -68,20 +85,38 @@ def _strategy_performance(cur):
     for r in rows:
         if r["trades"] < MIN_TRADES:
             continue
-        if r["win_rate"] < 40 or r["avg_gain"] < -5:
-            sev = "ACTION"
-        elif r["win_rate"] < 55:
-            sev = "WATCH"
+        strat = r["strategy"]
+
+        # LDS/LEAP/2x-ETF: positively skewed — require BOTH low win rate AND negative total P&L
+        if strat in LONG_THESIS_STRATEGIES:
+            if r["win_rate"] < 40 and r["total_pnl"] < 0:
+                sev = "ACTION"
+            elif r["win_rate"] < 45 and r["total_pnl"] < 0:
+                sev = "WATCH"
+            else:
+                continue
+        elif strat == "Thematic":
+            # Thematic: multi-year hold — only flag if avg gain < -15% (deep underwater)
+            if r["avg_gain"] < -15 and r["total_pnl"] < -1000:
+                sev = "WATCH"
+            else:
+                continue
         else:
-            continue
+            if r["win_rate"] < 40 or r["avg_gain"] < -5:
+                sev = "ACTION"
+            elif r["win_rate"] < 55:
+                sev = "WATCH"
+            else:
+                continue
+
         insights.append({
             "category": "STRATEGY",
             "severity": sev,
-            "title": f"{r['strategy']}: {r['win_rate']}% win rate, avg {r['avg_gain']:+.1f}% (90d)",
+            "title": f"{strat}: {r['win_rate']}% win rate, avg {r['avg_gain']:+.1f}% (90d)",
             "body": (
-                f"{r['strategy']} last 90 days — {r['trades']} trades, "
+                f"{strat} last 90 days — {r['trades']} trades, "
                 f"{r['win_rate']}% win rate, avg {r['avg_gain']:+.1f}% per trade, "
-                f"total P&L ${r['total_pnl']:+,.0f}. Review entry criteria and position management."
+                f"total P&L ${r['total_pnl']:+,.0f}."
             ),
             "metric_json": dict(r),
         })
@@ -202,6 +237,51 @@ def _wheel_underlying(cur):
                 f"{r['underlying']} wheel performance: {r['trades']} trades, "
                 f"${r['total_pnl']:+,.0f} total, {r['loss_rate']}% loss rate, "
                 f"avg {r['avg_gain']:+.1f}%. Consider repricing or avoiding."
+            ),
+            "metric_json": dict(r),
+        })
+    return insights
+
+
+# ── 4b. Thematic DCA opportunities ───────────────────────────────────────────
+
+def _thematic_dca(cur):
+    """Flag Thematic positions that are below cost AND under the 2% cap — DCA candidates."""
+    suppressed = _suppressed_underlyings(cur, "DCA-CANDIDATE")
+    nav_row = _one(cur, "SELECT nav FROM daily_briefings ORDER BY date DESC LIMIT 1")
+    if not nav_row:
+        return []
+    nav = float(nav_row["nav"])
+
+    rows = _all(cur, """
+        SELECT
+            p.underlying,
+            ROUND(ps.cost_basis::numeric, 0)                          AS cost,
+            ROUND(ps.current_value::numeric, 0)                       AS value,
+            ROUND(ps.gain_pct::numeric, 1)                            AS gain_pct,
+            ROUND(100.0 * ps.cost_basis / %(nav)s, 1)                AS pct_nav_cost
+        FROM position_snapshots ps
+        JOIN positions p ON p.id = ps.position_id
+        WHERE ps.snapshot_date = (SELECT MAX(snapshot_date) FROM position_snapshots)
+          AND p.strategy = 'Thematic'
+          AND p.closed_date IS NULL
+          AND ps.gain_pct < 0
+          AND 100.0 * ps.cost_basis / %(nav)s < 2.0
+        ORDER BY ps.gain_pct ASC
+    """, {"nav": nav})
+
+    insights = []
+    for r in rows:
+        if r["underlying"] in suppressed:
+            continue
+        insights.append({
+            "category": "THEMATIC",
+            "severity": "INFO",
+            "title": f"DCA candidate: {r['underlying']} ({r['gain_pct']:+.1f}%, {r['pct_nav_cost']}% of NAV)",
+            "body": (
+                f"{r['underlying']} Thematic position: {r['gain_pct']:+.1f}% unrealised, "
+                f"cost ${r['cost']:,.0f} ({r['pct_nav_cost']}% of NAV vs 2.0% cap). "
+                f"Room to DCA if thesis intact."
             ),
             "metric_json": dict(r),
         })
@@ -349,10 +429,44 @@ ANALYSES = [
     _pnl_trend,
     _hold_time,
     _wheel_underlying,
+    _thematic_dca,
     _sizing,
     _harvest_lag,
     _underwater_hold,
 ]
+
+
+def _build_narrative(insights: list[dict], run_date: date) -> str:
+    actions  = [i for i in insights if i["severity"] == "ACTION"]
+    watches  = [i for i in insights if i["severity"] == "WATCH"]
+    infos    = [i for i in insights if i["severity"] == "INFO"]
+
+    lines = [f"Weekly Analysis — {run_date.strftime('%d %b %Y')}"]
+    lines.append("")
+
+    if not insights:
+        lines.append("All thresholds clear. No issues flagged this week.")
+        return "\n".join(lines)
+
+    if actions:
+        lines.append(f"{len(actions)} item(s) need attention:")
+        for i in actions:
+            lines.append(f"  [{i['category']}] {i['title']}")
+            lines.append(f"    {i['body']}")
+        lines.append("")
+
+    if watches:
+        lines.append(f"{len(watches)} item(s) to monitor:")
+        for i in watches:
+            lines.append(f"  [{i['category']}] {i['title']}")
+        lines.append("")
+
+    if infos:
+        lines.append(f"{len(infos)} informational signal(s):")
+        for i in infos:
+            lines.append(f"  [{i['category']}] {i['title']}")
+
+    return "\n".join(lines)
 
 
 def run(account_id: int = ACCOUNT_ID) -> list[dict]:
@@ -387,6 +501,15 @@ def run(account_id: int = ACCOUNT_ID) -> list[dict]:
                 print(f"  [{fn.__name__}] skipped: {exc}")
 
     all_insights.sort(key=lambda x: SEV_ORDER.get(x["severity"], 9))
+
+    # Store narrative summary
+    narrative = _build_narrative(all_insights, date.today())
+    with transaction() as cur:
+        cur.execute(
+            "UPDATE analysis_runs SET narrative = %s WHERE id = %s",
+            (narrative, run_id),
+        )
+
     return all_insights
 
 

@@ -31,6 +31,7 @@ import load_pending_closes
 import load_open_positions
 import load_flex
 import load_briefing
+import load_position_overrides
 
 
 def resolve_account(cur, ibkr_account_id: str) -> tuple[int, int]:
@@ -117,7 +118,12 @@ def main():
     else:
         print("\n  No Flex file found in history/, skipping")
 
-    # 6. Daily briefings — load any not yet in DB (backfill on first run, then incremental)
+    # 6. Position overrides (user notes + flag suppressions)
+    overrides_path = repo / "position_overrides.csv"
+    print("\n→ position_overrides.csv")
+    load_position_overrides.load(overrides_path, account_id, owner_id)
+
+    # 7. Daily briefings — load any not yet in DB (backfill on first run, then incremental)
     briefing_dir = repo / "briefing_log"
     if briefing_dir.exists():
         briefing_files = sorted(briefing_dir.glob("????-??-??.md"))
