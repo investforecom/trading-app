@@ -71,4 +71,19 @@ PGUSER="$POSTGRES_USER" \
 PGPASSWORD="$POSTGRES_PASSWORD" \
 python3 run.py --repo "$REPO_DIR"
 
+# Saturday only: run weekly portfolio behaviour analysis (Layer 2).
+# Reads existing tables, writes to analysis_runs + insights.
+# DISCORD_WEBHOOK_URL must be set in .env to enable the Discord post.
+if [ "$(date +%u)" -eq 6 ]; then
+    echo ""
+    echo "→ Weekly analysis (Saturday)"
+    PGHOST=127.0.0.1 \
+    PGPORT=5432 \
+    PGDATABASE=trading \
+    PGUSER="$POSTGRES_USER" \
+    PGPASSWORD="$POSTGRES_PASSWORD" \
+    DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}" \
+    python3 run_analysis.py
+fi
+
 echo "=== done ==="
