@@ -13,6 +13,9 @@
 # sync.sh fallback at 20:30 UTC (idempotent — safe to double-run).
 set -euo pipefail
 export PATH="/home/char/.local/bin:$PATH"
+# Unset Claude Code session vars so claude -p runs as a standalone process,
+# not a child of any interactive session (avoids hanging when triggered manually).
+unset CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_EFFORT
 
 REPO_DIR="/home/char/workspace/trading-routine"
 LOADER_DIR="/home/char/workspace/dashboard/loader"
