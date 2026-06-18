@@ -83,6 +83,7 @@ if [ "$(date +%u)" -eq 6 ]; then
     PGUSER="$POSTGRES_USER" \
     PGPASSWORD="$POSTGRES_PASSWORD" \
     DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}" \
+    METABASE_TOKEN="${METABASE_TOKEN:-}" \
     python3 run_analysis.py
 fi
 

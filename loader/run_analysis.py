@@ -24,7 +24,11 @@ MIN_FLAG_EVENTS = 2
 
 SEV_ORDER = {"ACTION": 0, "WATCH": 1, "INFO": 2}
 
-DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+DISCORD_WEBHOOK    = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+METABASE_URL       = os.environ.get("METABASE_URL", "http://127.0.0.1:80")
+METABASE_TOKEN     = os.environ.get("METABASE_TOKEN", "").strip()
+WEEKLY_DASHBOARD_ID = 5
+NARRATIVE_DASHCARD_ID = 92
 
 # Strategies where the thesis is multi-year; harvest only at 80%+ and let Thematic run
 LONG_THESIS_STRATEGIES = ("LEAP", "LDS", "2x-ETF")
@@ -437,36 +441,92 @@ ANALYSES = [
 
 
 def _build_narrative(insights: list[dict], run_date: date) -> str:
-    actions  = [i for i in insights if i["severity"] == "ACTION"]
-    watches  = [i for i in insights if i["severity"] == "WATCH"]
-    infos    = [i for i in insights if i["severity"] == "INFO"]
+    """Plain-text narrative stored in analysis_runs.narrative."""
+    actions = [i for i in insights if i["severity"] == "ACTION"]
+    watches = [i for i in insights if i["severity"] == "WATCH"]
+    infos   = [i for i in insights if i["severity"] == "INFO"]
+    lines = [f"Weekly Analysis — {run_date.strftime('%d %b %Y')}",
+             f"{len(actions)} action · {len(watches)} watch · {len(infos)} info", ""]
+    if not insights:
+        lines.append("All thresholds clear.")
+    for sev, items in (("ACTION", actions), ("WATCH", watches), ("INFO", infos)):
+        for i in items:
+            lines.append(f"[{sev}] {i['category']}: {i['title']}")
+            lines.append(f"  {i['body']}")
+    return "\n".join(lines)
 
-    lines = [f"Weekly Analysis — {run_date.strftime('%d %b %Y')}"]
-    lines.append("")
+
+def _build_narrative_md(insights: list[dict], run_date: date) -> str:
+    """Markdown for Metabase virtual Text card — renders as formatted summary."""
+    actions = [i for i in insights if i["severity"] == "ACTION"]
+    watches = [i for i in insights if i["severity"] == "WATCH"]
+    infos   = [i for i in insights if i["severity"] == "INFO"]
+
+    lines = [f"## Weekly Analysis — {run_date.strftime('%d %b %Y')}",
+             ""]
 
     if not insights:
-        lines.append("All thresholds clear. No issues flagged this week.")
+        lines += ["**All thresholds clear.** Nothing flagged this week.", ""]
         return "\n".join(lines)
 
+    # Summary badge line
+    parts = []
+    if actions: parts.append(f"🔴 **{len(actions)} action item{'s' if len(actions)>1 else ''}**")
+    if watches: parts.append(f"🟡 **{len(watches)} watch item{'s' if len(watches)>1 else ''}**")
+    if infos:   parts.append(f"🟢 **{len(infos)} signal{'s' if len(infos)>1 else ''}**")
+    lines += [" · ".join(parts), "", "---", ""]
+
     if actions:
-        lines.append(f"{len(actions)} item(s) need attention:")
+        lines.append("### 🔴 Needs Attention")
         for i in actions:
-            lines.append(f"  [{i['category']}] {i['title']}")
-            lines.append(f"    {i['body']}")
-        lines.append("")
+            lines.append(f"**[{i['category']}]** {i['title']}")
+            lines.append(f"> {i['body']}")
+            lines.append("")
 
     if watches:
-        lines.append(f"{len(watches)} item(s) to monitor:")
+        lines.append("### 🟡 Monitoring")
         for i in watches:
-            lines.append(f"  [{i['category']}] {i['title']}")
-        lines.append("")
+            lines.append(f"**[{i['category']}]** {i['title']}")
+            lines.append(f"> {i['body']}")
+            lines.append("")
 
     if infos:
-        lines.append(f"{len(infos)} informational signal(s):")
+        lines.append("### 🟢 Signals & Opportunities")
         for i in infos:
-            lines.append(f"  [{i['category']}] {i['title']}")
+            lines.append(f"**[{i['category']}]** {i['title']}")
+            lines.append(f"> {i['body']}")
+            lines.append("")
 
     return "\n".join(lines)
+
+
+def _metabase_push_narrative(md: str) -> None:
+    """Update the virtual Text card on the weekly dashboard with fresh markdown."""
+    if not METABASE_TOKEN:
+        return
+    hdr = {"X-Metabase-Session": METABASE_TOKEN, "Content-Type": "application/json"}
+    try:
+        d = _requests.get(f"{METABASE_URL}/api/dashboard/{WEEKLY_DASHBOARD_ID}",
+                          headers=hdr, timeout=10).json()
+        updated = []
+        for c in d["dashcards"]:
+            entry = {k: c[k] for k in
+                     ["id", "card_id", "row", "col", "size_x", "size_y",
+                      "parameter_mappings", "visualization_settings", "series"]
+                     if k in c}
+            if c["id"] == NARRATIVE_DASHCARD_ID:
+                vs = dict(entry.get("visualization_settings", {}))
+                vs["text"] = md
+                entry["visualization_settings"] = vs
+            updated.append(entry)
+        resp = _requests.put(f"{METABASE_URL}/api/dashboard/{WEEKLY_DASHBOARD_ID}",
+                             headers=hdr, json={"dashcards": updated}, timeout=10)
+        if resp.ok:
+            print("  Metabase narrative card updated.")
+        else:
+            print(f"  Metabase update failed: {resp.status_code}")
+    except Exception as exc:
+        print(f"  Metabase narrative update skipped: {exc}")
 
 
 def run(account_id: int = ACCOUNT_ID) -> list[dict]:
@@ -502,13 +562,15 @@ def run(account_id: int = ACCOUNT_ID) -> list[dict]:
 
     all_insights.sort(key=lambda x: SEV_ORDER.get(x["severity"], 9))
 
-    # Store narrative summary
-    narrative = _build_narrative(all_insights, date.today())
+    run_date = date.today()
+    narrative = _build_narrative(all_insights, run_date)
     with transaction() as cur:
         cur.execute(
             "UPDATE analysis_runs SET narrative = %s WHERE id = %s",
             (narrative, run_id),
         )
+
+    _metabase_push_narrative(_build_narrative_md(all_insights, run_date))
 
     return all_insights
 
@@ -528,7 +590,7 @@ def _discord_post(insights: list[dict], run_date: date) -> None:
         lines.append(f"  ↳ {ins['body']}")
     if not insights:
         lines.append("No issues flagged — all thresholds clear.")
-    lines.append("http://139.99.197.93/dashboard/4")
+    lines.append("http://139.99.197.93/dashboard/5")
 
     message = "\n".join(lines)
     if len(message) > 1900:
