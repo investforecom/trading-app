@@ -21,9 +21,12 @@ HASH=$(docker exec trading-app-caddy-1 caddy hash-password --plaintext "$PASS")
 sed -i '/^TRADING_APP_USER=/d' "$ENV_FILE"
 sed -i '/^TRADING_APP_HASH=/d' "$ENV_FILE"
 
+# Escape $ as $$ so docker-compose doesn't interpolate the bcrypt hash
+ESCAPED_HASH="${HASH//\$/\$\$}"
+
 # Append new values
 echo "TRADING_APP_USER=$USER" >> "$ENV_FILE"
-echo "TRADING_APP_HASH=$HASH" >> "$ENV_FILE"
+echo "TRADING_APP_HASH=$ESCAPED_HASH" >> "$ENV_FILE"
 
 echo "Credentials written to .env"
 echo "Restarting Caddy..."
