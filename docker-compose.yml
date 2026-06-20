@@ -11,10 +11,10 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init:/docker-entrypoint-initdb.d:ro
-    # Bind to localhost only — loader connects via 127.0.0.1:5432 on the host.
-    # Never expose postgres to the public internet.
+    # During transition: expose on 5433 so dashboard's postgres can stay on 5432.
+    # At cutover: change to 127.0.0.1:5432:5432 and stop the old dashboard stack.
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"
     networks:
       - internal
     healthcheck:
@@ -23,55 +23,56 @@ services:
       timeout: 5s
       retries: 5
 
-  metabase:
-    image: metabase/metabase:latest
+  api:
+    build: ./backend
     restart: always
     env_file: .env
     environment:
-      MB_DB_TYPE: ${METABASE_DB_TYPE}
-      MB_DB_HOST: ${METABASE_DB_HOST}
-      MB_DB_PORT: ${METABASE_DB_PORT}
-      MB_DB_DBNAME: ${METABASE_DB_DBNAME}
-      MB_DB_USER: ${METABASE_DB_USER}
-      MB_DB_PASS: ${METABASE_DB_PASS}
-      MB_SITE_URL: http://${SERVER_IP}
-      MB_ANON_TRACKING_ENABLED: "false"
-    ports:
-      # Exposed directly on port 80 until a domain + Caddy are added.
-      # To add TLS later: remove this port binding, uncomment the caddy service below.
-      - "80:3000"
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: trading
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    networks:
+      - internal
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: ./frontend
+    restart: always
     networks:
       - internal
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 90s
+    depends_on:
+      - api
 
-  # caddy:   <- uncomment when you have a domain
-  #   image: caddy:2-alpine
-  #   restart: always
-  #   ports:
-  #     - "80:80"
-  #     - "443:443"
-  #     - "443:443/udp"
-  #   volumes:
-  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
-  #     - caddy_data:/data
-  #     - caddy_config:/config
-  #   networks:
-  #     - internal
-  #   depends_on:
-  #     - metabase
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - internal
+    depends_on:
+      - api
+      - web
 
 volumes:
   postgres_data:
-  # caddy_data:    <- uncomment with caddy
-  # caddy_config:  <- uncomment with caddy
+  caddy_data:
+  caddy_config:
 
 networks:
   internal:

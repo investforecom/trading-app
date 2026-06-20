@@ -1,28 +1,38 @@
-# Global options
 {
-    admin off          # disable Caddy admin API on the host
-    email investforecom@gmail.com   # Let's Encrypt contact
+    admin off
+    email investforecom@gmail.com
 }
 
-# Replace YOUR_DOMAIN before deploying, or set via environment if you prefer.
-# Caddy provisions and renews TLS automatically via Let's Encrypt.
-YOUR_DOMAIN {
-    # Proxy all traffic to Metabase
-    reverse_proxy metabase:3000
+# Replace with your domain when ready; until then use :80 for plain HTTP.
+# With a real domain, Caddy provisions TLS automatically.
+:80 {
+    # API → FastAPI
+    handle /api/* {
+        reverse_proxy api:8000
+    }
 
-    # Security headers
+    # Everything else → Next.js
+    handle {
+        reverse_proxy web:3000
+    }
+
     header {
         X-Frame-Options "SAMEORIGIN"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
         -Server
     }
-
-    # Access log (optional — remove if noisy)
-    log {
-        output file /data/access.log {
-            roll_size 10mb
-            roll_keep 5
-        }
-    }
 }
+
+# Uncomment and replace YOUR_DOMAIN to enable HTTPS + auto TLS:
+# YOUR_DOMAIN {
+#     handle /api/* { reverse_proxy api:8000 }
+#     handle        { reverse_proxy web:3000 }
+#     header {
+#         X-Frame-Options "SAMEORIGIN"
+#         X-Content-Type-Options "nosniff"
+#         Referrer-Policy "strict-origin-when-cross-origin"
+#         Strict-Transport-Security "max-age=31536000"
+#         -Server
+#     }
+# }
