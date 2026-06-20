@@ -6,6 +6,11 @@
 # Replace with your domain when ready; until then use :80 for plain HTTP.
 # With a real domain, Caddy provisions TLS automatically.
 :80 {
+    # Basic auth — credentials set via TRADING_APP_USER / TRADING_APP_HASH in .env
+    basicauth /* {
+        {env.TRADING_APP_USER} {env.TRADING_APP_HASH}
+    }
+
     # API → FastAPI
     handle /api/* {
         reverse_proxy api:8000

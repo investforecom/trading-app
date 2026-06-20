@@ -47,6 +47,8 @@ services:
   web:
     build: ./frontend
     restart: always
+    environment:
+      API_URL: http://api:8000
     networks:
       - internal
     depends_on:
@@ -55,10 +57,12 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: always
+    env_file: .env
+    environment:
+      TRADING_APP_USER: ${TRADING_APP_USER}
+      TRADING_APP_HASH: ${TRADING_APP_HASH}
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "8080:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
