@@ -328,9 +328,9 @@ function PositionCard({ p }: { p: any }) {
   ]
 
   return (
-    <div className="px-4 py-3 border-b border-border last:border-0">
+    <div className="px-4 py-2.5 border-b border-border last:border-0">
       {/* Row 1: badge + symbol + %NAV */}
-      <div className="flex items-center gap-2 mb-1">
+      <div className="flex items-center gap-2">
         <Badge value={p.strategy} />
         <span className="font-mono font-medium text-gray-100 text-sm leading-tight truncate flex-1 min-w-0">
           {p.symbol}
@@ -338,13 +338,18 @@ function PositionCard({ p }: { p: any }) {
         <span className="text-[10px] text-gray-600 tabular-nums flex-shrink-0">{p.pct_nav}%</span>
       </div>
 
-      {/* Row 2: note sub-text */}
-      {formattedNote && (
-        <p className="text-[11px] text-gray-500 mb-2 leading-snug">{formattedNote}</p>
-      )}
+      {/*
+        Row 2: single context line — flag text (amber, wrapping) when flags exist,
+        otherwise the formatted note (grey). Never both.
+      */}
+      {flagLines.length > 0 ? (
+        <p className="text-[11px] text-amber-400/80 mt-1 leading-snug">{flagLines.join(' · ')}</p>
+      ) : formattedNote ? (
+        <p className="text-[11px] text-gray-500 mt-1 leading-snug">{formattedNote}</p>
+      ) : null}
 
       {/* Row 3: key metrics */}
-      <div className="flex items-end gap-4">
+      <div className="flex items-end gap-4 mt-2">
         <div>
           <div className="text-[9px] text-gray-600 uppercase tracking-wider">Value</div>
           <div className="text-xs text-gray-200 tabular-nums font-medium">${Number(p.value).toLocaleString()}</div>
@@ -368,13 +373,6 @@ function PositionCard({ p }: { p: any }) {
           <div className="text-xs text-gray-500 tabular-nums">{p.qty}</div>
         </div>
       </div>
-
-      {/* Row 4: flags — shown as text, no hover needed on touch */}
-      {flagLines.length > 0 && (
-        <p className="mt-1.5 text-[11px] text-amber-400/80 leading-snug">
-          {flagLines.join(' · ')}
-        </p>
-      )}
     </div>
   )
 }
