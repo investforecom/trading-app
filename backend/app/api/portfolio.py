@@ -43,30 +43,44 @@ def pnl():
 @router.get("/positions")
 def positions():
     return query("""
+        WITH today    AS (SELECT MAX(snapshot_date) AS d FROM position_snapshots),
+             prev_day AS (SELECT MAX(snapshot_date) AS d FROM position_snapshots
+                          WHERE snapshot_date < (SELECT d FROM today)),
+             prev_wk  AS (SELECT MAX(snapshot_date) AS d FROM position_snapshots
+                          WHERE snapshot_date <= (SELECT d FROM today) - INTERVAL '5 days')
         SELECT
             p.symbol,
             p.underlying,
             p.strategy,
             p.theme,
-            ROUND(ps.qty::numeric, 0)                                    AS qty,
-            ROUND(ps.cost_basis::numeric, 0)                             AS cost,
-            ROUND(ps.cost_basis / NULLIF(ps.qty, 0), 2)                 AS avg_price,
-            ROUND(ps.current_value::numeric, 0)                          AS value,
-            ROUND(ps.gain_pct::numeric, 1)      AS gain_pct,
-            ROUND(ps.pct_nav::numeric, 1)       AS pct_nav,
-            ps.notes                            AS csv_note,
+            ROUND(ps.qty::numeric, 0)                                       AS qty,
+            ROUND(ps.cost_basis::numeric, 0)                                AS cost,
+            ROUND(ps.cost_basis / NULLIF(ps.qty, 0), 2)                    AS avg_price,
+            ROUND(ps.current_value::numeric, 0)                             AS value,
+            ROUND(ps.gain_pct::numeric, 1)                                  AS gain_pct,
+            ROUND(ps.pct_nav::numeric, 1)                                   AS pct_nav,
+            ROUND((ps.gain_pct - ps_p.gain_pct)::numeric, 1)               AS daily_pp,
+            ROUND((ps.current_value - ps_p.current_value)::numeric, 0)     AS daily_usd,
+            ROUND((ps.gain_pct - ps_w.gain_pct)::numeric, 1)               AS weekly_pp,
+            ps.notes                                                         AS csv_note,
             ps.ai_note,
             ps.flags,
             p.assignment_price,
             pn.note
         FROM position_snapshots ps
         JOIN positions p ON p.id = ps.position_id
+        LEFT JOIN position_snapshots ps_p
+               ON ps_p.position_id   = ps.position_id
+              AND ps_p.snapshot_date  = (SELECT d FROM prev_day)
+        LEFT JOIN position_snapshots ps_w
+               ON ps_w.position_id   = ps.position_id
+              AND ps_w.snapshot_date  = (SELECT d FROM prev_wk)
         LEFT JOIN position_notes pn
                ON pn.account_id = p.account_id
               AND pn.underlying = p.underlying
               AND pn.active = TRUE
               AND (pn.snooze_until IS NULL OR pn.snooze_until >= CURRENT_DATE)
-        WHERE ps.snapshot_date = (SELECT MAX(snapshot_date) FROM position_snapshots)
+        WHERE ps.snapshot_date = (SELECT d FROM today)
           AND p.strategy <> 'cash'
           AND p.closed_date IS NULL
         ORDER BY ps.pct_nav DESC NULLS LAST

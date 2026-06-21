@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import Badge from '@/components/ui/badge'
 
 type SortDir = 'asc' | 'desc' | null
-type SortKey = 'symbol' | 'underlying' | 'theme' | 'strategy' | 'qty' | 'cost' | 'avg_price' | 'value' | 'gain_pct' | 'pct_nav'
+type SortKey = 'symbol' | 'underlying' | 'theme' | 'strategy' | 'qty' | 'cost' | 'avg_price' | 'value' | 'gain_pct' | 'pct_nav' | 'daily_pp'
 
 // ── Note normalization ────────────────────────────────────────────────────────
 
@@ -122,17 +123,21 @@ function inlineFlagColor(text: string): string {
 interface FlagCellProps {
   flags: string[] | null
   inlineFlag: string | null
+  moveAlerts: string[]   // e.g. ['▼ −8.2pp today', '▼ −12.4pp week']
   onShow: (lines: string[], x: number, y: number) => void
   onHide: () => void
 }
 
-function FlagCell({ flags, inlineFlag, onShow, onHide }: FlagCellProps) {
+function FlagCell({ flags, inlineFlag, moveAlerts, onShow, onHide }: FlagCellProps) {
   const hasFormal = flags && flags.length > 0
-  if (!hasFormal && !inlineFlag) return <span className="text-gray-700">—</span>
+  const hasInline = !!inlineFlag
+  const hasMoves  = moveAlerts.length > 0
+  if (!hasFormal && !hasInline && !hasMoves) return <span className="text-gray-700">—</span>
 
   const lines = [
     ...(flags || []).map(f => f.replace(/_/g, ' ')),
-    ...(inlineFlag ? [inlineFlag] : []),
+    ...(hasInline ? [inlineFlag!] : []),
+    ...moveAlerts,
   ]
 
   return (
@@ -142,10 +147,117 @@ function FlagCell({ flags, inlineFlag, onShow, onHide }: FlagCellProps) {
       onMouseLeave={onHide}
     >
       {(flags || []).map((f, i) => (
-        <span key={i} className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${formalFlagColor(f)}`} />
+        <span key={`f${i}`} className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${formalFlagColor(f)}`} />
       ))}
-      {!hasFormal && inlineFlag && (
-        <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${inlineFlagColor(inlineFlag)}`} />
+      {!hasFormal && hasInline && (
+        <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${inlineFlagColor(inlineFlag!)}`} />
+      )}
+      {/* Move-alert dots: square shape to distinguish from fundamental flags */}
+      {moveAlerts.map((m, i) => {
+        const isDown = m.startsWith('▼')
+        return (
+          <span
+            key={`m${i}`}
+            className={`inline-block w-2.5 h-2.5 rounded-sm shrink-0 ${isDown ? 'bg-red-400' : 'bg-emerald-400'}`}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Multi-select dropdown ─────────────────────────────────────────────────────
+
+function MultiSelect({ label, options, selected, onToggle }: {
+  label: string
+  options: string[]
+  selected: Set<string>
+  onToggle: (v: string) => void
+}) {
+  const [open, setOpen]     = useState(false)
+  const [search, setSearch] = useState('')
+  const ref                 = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false)
+        setSearch('')
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [])
+
+  const count    = selected.size
+  const filtered = options.filter(o => o.toLowerCase().includes(search.toLowerCase()))
+
+  // Build button label: show first 2 selected values + overflow count
+  const selArr   = [...selected]
+  const btnLabel = count === 0
+    ? label
+    : selArr.slice(0, 2).join(', ') + (count > 2 ? ` +${count - 2}` : '')
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs transition-colors ${
+          count > 0
+            ? 'bg-white/10 text-gray-100 border-white/20'
+            : 'text-gray-400 border-gray-700 hover:border-gray-500 hover:text-gray-300'
+        }`}
+      >
+        <span className="max-w-[180px] truncate">{btnLabel}</span>
+        <svg
+          className={`w-3 h-3 flex-shrink-0 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute top-full mt-1 left-0 z-50 bg-gray-900 border border-gray-700 rounded-lg shadow-2xl min-w-[190px] flex flex-col">
+          {options.length > 7 && (
+            <div className="px-3 pt-2 pb-1">
+              <input
+                type="text"
+                placeholder="Search…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full bg-gray-800 text-xs text-gray-300 placeholder-gray-600 px-2 py-1 rounded border border-gray-700 outline-none"
+                autoFocus
+              />
+            </div>
+          )}
+          <div className="overflow-y-auto max-h-[260px] py-1">
+            {filtered.map(o => (
+              <label key={o} className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-white/5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selected.has(o)}
+                  onChange={() => onToggle(o)}
+                  className="accent-indigo-500 w-3.5 h-3.5 flex-shrink-0"
+                />
+                <span className="text-xs text-gray-300">{o}</span>
+              </label>
+            ))}
+            {filtered.length === 0 && (
+              <div className="px-3 py-2 text-xs text-gray-600">No matches</div>
+            )}
+          </div>
+          {count > 0 && (
+            <div className="border-t border-gray-700/60 px-3 py-1.5">
+              <button
+                onClick={() => { onToggle('__clear__'); setOpen(false) }}
+                className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
@@ -165,6 +277,27 @@ function fmtAvg(v: number | null | undefined) {
   return `$${n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+// Parse the "was X.X%" pattern from note as fallback when DB daily_pp is null
+function parseDailyPP(gainPct: number | null, csvNote: string | null): number | null {
+  if (gainPct == null || !csvNote) return null
+  const m = csvNote.match(/\(was\s+([+-]?\d+\.?\d*)%\)/)
+  if (!m) return null
+  const prev = parseFloat(m[1])
+  return Math.round((gainPct - prev) * 10) / 10
+}
+
+function deltaColor(v: number): string {
+  const abs = Math.abs(v)
+  if (abs >= 7)  return v > 0 ? 'text-emerald-300 font-semibold' : 'text-red-300 font-semibold'
+  if (abs >= 3)  return v > 0 ? 'text-emerald-400' : 'text-red-400'
+  if (abs >= 1)  return v > 0 ? 'text-emerald-500' : 'text-red-500'
+  return v > 0 ? 'text-emerald-700' : 'text-red-700'
+}
+
+function fmtDelta(v: number): string {
+  return (v > 0 ? '+' : '') + v.toFixed(1)
+}
+
 function SortIcon({ dir }: { dir: SortDir }) {
   if (dir === 'asc')  return <span className="ml-1 opacity-80">↑</span>
   if (dir === 'desc') return <span className="ml-1 opacity-80">↓</span>
@@ -174,30 +307,48 @@ function SortIcon({ dir }: { dir: SortDir }) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function PositionsTable({ positions }: { positions: any[] }) {
-  const [filter, setFilter]   = useState('')
   const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDir, setSortDir] = useState<SortDir>(null)
-  const [tip, setTip]         = useState<{ lines: string[]; x: number; y: number } | null>(null)
+  const [tip,     setTip]     = useState<{ lines: string[]; x: number; y: number } | null>(null)
+
+  const [selStrategies,  setSelStrategies]  = useState<Set<string>>(new Set())
+  const [selThemes,      setSelThemes]      = useState<Set<string>>(new Set())
+  const [selUnderlyings, setSelUnderlyings] = useState<Set<string>>(new Set())
+
+  const allStrategies  = useMemo(() => [...new Set((positions ?? []).map((p: any) => p.strategy).filter(Boolean))].sort(), [positions])
+  const allThemes      = useMemo(() => [...new Set((positions ?? []).map((p: any) => p.theme).filter(Boolean))].sort(), [positions])
+  const allUnderlyings = useMemo(() => [...new Set((positions ?? []).map((p: any) => p.underlying).filter(Boolean))].sort(), [positions])
+
+  const hasFilters = selStrategies.size > 0 || selThemes.size > 0 || selUnderlyings.size > 0
+
+  function toggle(setter: React.Dispatch<React.SetStateAction<Set<string>>>, val: string) {
+    if (val === '__clear__') { setter(new Set()); return }
+    setter(prev => {
+      const next = new Set(prev)
+      next.has(val) ? next.delete(val) : next.add(val)
+      return next
+    })
+  }
+
+  function clearAll() {
+    setSelStrategies(new Set())
+    setSelThemes(new Set())
+    setSelUnderlyings(new Set())
+  }
 
   function toggleSort(key: SortKey) {
     if (sortKey !== key) { setSortKey(key); setSortDir('asc'); return }
-    if (sortDir === 'asc')  { setSortDir('desc'); return }
+    if (sortDir === 'asc') { setSortDir('desc'); return }
     setSortKey(null); setSortDir(null)
   }
 
   const rows = useMemo(() => {
     let r = positions ?? []
-    if (filter.trim()) {
-      const q = filter.toLowerCase()
-      r = r.filter((p: any) =>
-        p.symbol?.toLowerCase().includes(q) ||
-        p.underlying?.toLowerCase().includes(q) ||
-        p.theme?.toLowerCase().includes(q) ||
-        p.strategy?.toLowerCase().includes(q)
-      )
-    }
+    if (selStrategies.size  > 0) r = r.filter((p: any) => selStrategies.has(p.strategy))
+    if (selThemes.size      > 0) r = r.filter((p: any) => selThemes.has(p.theme))
+    if (selUnderlyings.size > 0) r = r.filter((p: any) => selUnderlyings.has(p.underlying))
     if (sortKey && sortDir) {
-      r = [...r].sort((a, b) => {
+      r = [...r].sort((a: any, b: any) => {
         const av = a[sortKey], bv = b[sortKey]
         if (av == null && bv == null) return 0
         if (av == null) return 1
@@ -207,7 +358,15 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
       })
     }
     return r
-  }, [positions, filter, sortKey, sortDir])
+  }, [positions, selStrategies, selThemes, selUnderlyings, sortKey, sortDir])
+
+  const totals = useMemo(() => {
+    const cost  = rows.reduce((s: number, p: any) => s + (Number(p.cost)    || 0), 0)
+    const value = rows.reduce((s: number, p: any) => s + (Number(p.value)   || 0), 0)
+    const pctNav = rows.reduce((s: number, p: any) => s + (Number(p.pct_nav) || 0), 0)
+    const gainPct = cost > 0 ? (value - cost) / cost * 100 : null
+    return { cost, value, pctNav, gainPct }
+  }, [rows])
 
   function Th({ label, col, align = 'text-left' }: { label: string; col: SortKey; align?: string }) {
     return (
@@ -222,8 +381,8 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
 
   return (
     <>
-      {/* Fixed-position tooltip — position: fixed escapes all overflow clipping */}
-      {tip && (
+      {/* Portal tooltip */}
+      {tip && createPortal(
         <div
           className="fixed z-[9999] bg-gray-900 border border-gray-700 rounded-lg shadow-2xl px-3 py-2 text-xs text-gray-200 pointer-events-none max-w-[320px] leading-relaxed"
           style={{ left: tip.x + 14, top: tip.y + 10 }}
@@ -231,25 +390,46 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
           {tip.lines.map((l, i) => (
             <div key={i} className={i > 0 ? 'mt-1 pt-1 border-t border-gray-700' : ''}>{l}</div>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
 
-      <div className="px-4 py-2.5 border-b border-border flex items-center gap-2">
-        <svg className="w-3.5 h-3.5 text-gray-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-        </svg>
-        <input
-          type="text"
-          placeholder="Filter by symbol, underlying, theme or strategy…"
-          value={filter}
-          onChange={e => setFilter(e.target.value)}
-          className="flex-1 bg-transparent text-sm text-gray-300 placeholder-gray-600 outline-none"
+      {/* Filter bar — single line */}
+      <div className="px-4 py-2.5 border-b border-border flex items-center gap-2 flex-wrap">
+        <MultiSelect
+          label="Strategy"
+          options={allStrategies}
+          selected={selStrategies}
+          onToggle={v => toggle(setSelStrategies, v)}
         />
-        {filter && (
-          <button onClick={() => setFilter('')} className="text-gray-600 hover:text-gray-400 text-xs">✕</button>
+        <MultiSelect
+          label="Theme"
+          options={allThemes}
+          selected={selThemes}
+          onToggle={v => toggle(setSelThemes, v)}
+        />
+        <MultiSelect
+          label="Ticker"
+          options={allUnderlyings}
+          selected={selUnderlyings}
+          onToggle={v => toggle(setSelUnderlyings, v)}
+        />
+        {hasFilters && (
+          <>
+            <span className="text-xs text-gray-600 ml-1">
+              {rows.length} of {(positions ?? []).length}
+            </span>
+            <button
+              onClick={clearAll}
+              className="text-xs text-gray-500 hover:text-gray-300 transition-colors ml-auto"
+            >
+              Clear all
+            </button>
+          </>
         )}
       </div>
 
+      {/* Table */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -263,14 +443,32 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
               <Th label="Avg"        col="avg_price" align="text-right" />
               <Th label="Value"      col="value"     align="text-right" />
               <Th label="Gain%"      col="gain_pct"  align="text-right" />
+              <Th label="Day Δ"      col="daily_pp"  align="text-right" />
               <Th label="%NAV"       col="pct_nav"   align="text-right" />
               <th className="px-4 py-3 text-center text-xs text-gray-500 uppercase tracking-wider">Flag</th>
             </tr>
           </thead>
+
           <tbody className="divide-y divide-border">
             {rows.map((p: any, i: number) => {
               const { display: splitDisplay, flag: inlineFlag } = splitNote(p.csv_note)
               const formattedNote = formatNote(splitDisplay || null, p.strategy)
+
+              // daily_pp: prefer DB value, fall back to parsing "was X%" from note
+              const dailyPP: number | null = p.daily_pp ?? parseDailyPP(p.gain_pct, p.csv_note)
+              const weeklyPP: number | null = p.weekly_pp ?? null
+
+              // Violent-move alerts — square dots in Flag column + tooltip lines
+              const DAILY_VIOLENT  = 5   // pp threshold for daily flag
+              const WEEKLY_VIOLENT = 10  // pp threshold for weekly flag
+              const moveAlerts: string[] = []
+              if (dailyPP != null && Math.abs(dailyPP) >= DAILY_VIOLENT) {
+                moveAlerts.push(`${dailyPP > 0 ? '▲' : '▼'} ${fmtDelta(dailyPP)}pp today`)
+              }
+              if (weeklyPP != null && Math.abs(weeklyPP) >= WEEKLY_VIOLENT) {
+                moveAlerts.push(`${weeklyPP > 0 ? '▲' : '▼'} ${fmtDelta(weeklyPP)}pp this week`)
+              }
+
               return (
                 <tr key={i} className="hover:bg-white/3 transition-colors">
                   <td className="px-4 py-2.5">
@@ -302,11 +500,30 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
                   <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap tabular-nums ${gainColor(p.gain_pct)}`}>
                     {p.gain_pct > 0 ? '+' : ''}{p.gain_pct}%
                   </td>
+                  {/* Day Δ — daily movement with weekly sub-line */}
+                  <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                    {dailyPP != null ? (
+                      <div className="flex flex-col items-end gap-px">
+                        <span className={`text-xs tabular-nums ${deltaColor(dailyPP)}`}>
+                          {fmtDelta(dailyPP)}
+                          {Math.abs(dailyPP) >= DAILY_VIOLENT ? ' ⚡' : ''}
+                        </span>
+                        {weeklyPP != null && (
+                          <span className={`text-[10px] tabular-nums ${deltaColor(weeklyPP)}`}>
+                            {fmtDelta(weeklyPP)}w
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-gray-700 text-xs">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5 text-right text-gray-400 whitespace-nowrap tabular-nums">{p.pct_nav}%</td>
                   <td className="px-4 py-2.5 text-center">
                     <FlagCell
                       flags={p.flags}
                       inlineFlag={inlineFlag}
+                      moveAlerts={moveAlerts}
                       onShow={(lines, x, y) => setTip({ lines, x, y })}
                       onHide={() => setTip(null)}
                     />
@@ -316,12 +533,41 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={11} className="px-4 py-8 text-center text-gray-600 text-xs">
+                <td colSpan={12} className="px-4 py-8 text-center text-gray-600 text-xs">
                   No positions match
                 </td>
               </tr>
             )}
           </tbody>
+
+          {/* Total row */}
+          <tfoot>
+            <tr className="border-t-2 border-border/60 bg-white/[0.015]">
+              <td className="px-4 py-2.5 text-xs text-gray-500 font-medium" colSpan={5}>
+                Total
+                <span className="text-gray-600 font-normal ml-1">
+                  ({rows.length}{hasFilters ? ` of ${(positions ?? []).length}` : ''})
+                </span>
+              </td>
+              <td /> {/* qty */}
+              <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-xs font-semibold">
+                ${totals.cost.toLocaleString()}
+              </td>
+              <td /> {/* avg */}
+              <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-xs font-semibold">
+                ${totals.value.toLocaleString()}
+              </td>
+              <td className={`px-4 py-2.5 text-right text-xs font-semibold tabular-nums ${gainColor(totals.gainPct)}`}>
+                {totals.gainPct != null
+                  ? `${totals.gainPct > 0 ? '+' : ''}${totals.gainPct.toFixed(1)}%`
+                  : '—'}
+              </td>
+              <td className="px-4 py-2.5 text-right text-gray-400 tabular-nums text-xs font-semibold">
+                {totals.pctNav.toFixed(1)}%
+              </td>
+              <td /> {/* flag */}
+            </tr>
+          </tfoot>
         </table>
       </div>
     </>
