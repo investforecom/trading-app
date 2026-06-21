@@ -295,7 +295,7 @@ function deltaColor(v: number): string {
 }
 
 function fmtDelta(v: number): string {
-  return (v > 0 ? '+' : '') + v.toFixed(1)
+  return (v > 0 ? '+' : '') + v.toFixed(1) + '%'
 }
 
 function SortIcon({ dir }: { dir: SortDir }) {
@@ -343,13 +343,19 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
   }
 
   const rows = useMemo(() => {
-    let r = positions ?? []
+    // Pre-compute effective daily_pp (DB value when available, else parse from note)
+    // so filters AND sort both operate on the real value
+    let r = (positions ?? []).map((p: any) => ({
+      ...p,
+      eff_daily_pp: p.daily_pp ?? parseDailyPP(p.gain_pct, p.csv_note),
+    }))
     if (selStrategies.size  > 0) r = r.filter((p: any) => selStrategies.has(p.strategy))
     if (selThemes.size      > 0) r = r.filter((p: any) => selThemes.has(p.theme))
     if (selUnderlyings.size > 0) r = r.filter((p: any) => selUnderlyings.has(p.underlying))
     if (sortKey && sortDir) {
       r = [...r].sort((a: any, b: any) => {
-        const av = a[sortKey], bv = b[sortKey]
+        const av = sortKey === 'daily_pp' ? a.eff_daily_pp : a[sortKey]
+        const bv = sortKey === 'daily_pp' ? b.eff_daily_pp : b[sortKey]
         if (av == null && bv == null) return 0
         if (av == null) return 1
         if (bv == null) return -1
@@ -454,8 +460,7 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
               const { display: splitDisplay, flag: inlineFlag } = splitNote(p.csv_note)
               const formattedNote = formatNote(splitDisplay || null, p.strategy)
 
-              // daily_pp: prefer DB value, fall back to parsing "was X%" from note
-              const dailyPP: number | null = p.daily_pp ?? parseDailyPP(p.gain_pct, p.csv_note)
+              const dailyPP: number | null  = p.eff_daily_pp   // pre-computed in useMemo
               const weeklyPP: number | null = p.weekly_pp ?? null
 
               // Violent-move alerts — square dots in Flag column + tooltip lines
@@ -543,29 +548,26 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
           {/* Total row */}
           <tfoot>
             <tr className="border-t-2 border-border/60 bg-white/[0.015]">
+              {/* colSpan=5 covers: Symbol | Underlying | Theme | Strategy | Qty */}
               <td className="px-4 py-2.5 text-xs text-gray-500 font-medium" colSpan={5}>
                 Total
                 <span className="text-gray-600 font-normal ml-1">
                   ({rows.length}{hasFilters ? ` of ${(positions ?? []).length}` : ''})
                 </span>
               </td>
-              <td /> {/* qty */}
               <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-xs font-semibold">
                 ${totals.cost.toLocaleString()}
               </td>
-              <td /> {/* avg */}
+              <td /> {/* Avg */}
               <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-xs font-semibold">
                 ${totals.value.toLocaleString()}
               </td>
-              <td className={`px-4 py-2.5 text-right text-xs font-semibold tabular-nums ${gainColor(totals.gainPct)}`}>
-                {totals.gainPct != null
-                  ? `${totals.gainPct > 0 ? '+' : ''}${totals.gainPct.toFixed(1)}%`
-                  : '—'}
-              </td>
+              <td /> {/* Gain% */}
+              <td /> {/* Day Δ */}
               <td className="px-4 py-2.5 text-right text-gray-400 tabular-nums text-xs font-semibold">
                 {totals.pctNav.toFixed(1)}%
               </td>
-              <td /> {/* flag */}
+              <td /> {/* Flag */}
             </tr>
           </tfoot>
         </table>
