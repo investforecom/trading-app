@@ -2,7 +2,9 @@
 
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { useRouter } from 'next/navigation'
 import Badge from '@/components/ui/badge'
+import { api } from '@/lib/api'
 
 type SortDir = 'asc' | 'desc' | null
 type SortKey = 'symbol' | 'underlying' | 'theme' | 'strategy' | 'qty' | 'cost' | 'avg_price' | 'value' | 'gain_pct' | 'pct_nav' | 'daily_pp'
@@ -310,12 +312,12 @@ function SortIcon({ dir }: { dir: SortDir }) {
 }
 
 // ── Shared context line ───────────────────────────────────────────────────────
-// Single rule used by both desktop Symbol cell and mobile card:
-//   flagged  → amber flag text (dots stay in Flag column on desktop)
-//   otherwise → grey formatted note
-// Returns null when there is nothing to display.
+// Priority: user ack note > amber flags > grey formatted note > null
 
 function contextLine(p: any): { text: string; isFlag: boolean } | null {
+  // User's acknowledgement note takes priority — shown in grey (conscious decision)
+  if (p.note) return { text: p.note, isFlag: false }
+
   const { display: splitDisplay, flag: inlineFlag } = splitNote(p.csv_note)
   const note = formatNote(splitDisplay || null, p.strategy)
 
@@ -333,20 +335,155 @@ function contextLine(p: any): { text: string; isFlag: boolean } | null {
   return null
 }
 
+// ── Note modal ────────────────────────────────────────────────────────────────
+
+interface NoteModalProps {
+  underlying: string
+  formalFlags: string[]     // current p.flags for suppress pre-fill
+  existingNote: string | null
+  onClose: () => void
+  onSaved: () => void
+}
+
+function NoteModal({ underlying, formalFlags, existingNote, onClose, onSaved }: NoteModalProps) {
+  const [note,   setNote]   = useState(existingNote ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState<string | null>(null)
+
+  async function handleSave() {
+    const trimmed = note.trim()
+    if (!trimmed) return
+    setSaving(true)
+    setError(null)
+    try {
+      await api.portfolio.upsertNote(underlying, {
+        note: trimmed,
+        suppress_flags: formalFlags,
+      })
+      onSaved()
+    } catch {
+      setError('Save failed — check connection')
+      setSaving(false)
+    }
+  }
+
+  async function handleClear() {
+    setSaving(true)
+    setError(null)
+    try {
+      await api.portfolio.deleteNote(underlying)
+      onSaved()
+    } catch {
+      setError('Clear failed — check connection')
+      setSaving(false)
+    }
+  }
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Escape') onClose()
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSave()
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center" onKeyDown={onKeyDown}>
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Sheet — slides up from bottom on mobile, centered dialog on sm+ */}
+      <div className="relative z-10 bg-gray-900 border border-gray-700 rounded-t-2xl sm:rounded-xl shadow-2xl
+                      w-full sm:max-w-md mx-0 sm:mx-4 p-5 flex flex-col gap-4">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-semibold text-gray-100 font-mono">{underlying}</span>
+            {formalFlags.length > 0 && (
+              <div className="flex gap-1.5 flex-wrap">
+                {formalFlags.map(f => (
+                  <span key={f} className="text-[10px] bg-amber-400/15 text-amber-400 px-1.5 py-0.5 rounded font-mono">
+                    {f.replace(/_/g, ' ')}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-600 hover:text-gray-400 transition-colors text-xl leading-none flex-shrink-0 mt-0.5"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Textarea */}
+        <textarea
+          autoFocus
+          rows={4}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-gray-200
+                     placeholder-gray-600 resize-none outline-none focus:border-gray-500 transition-colors"
+          placeholder="Your plan — e.g. 'Already trimmed 50% in strength. Waiting for weakness before cutting more.'"
+          value={note}
+          onChange={e => setNote(e.target.value)}
+        />
+
+        {error && <p className="text-xs text-red-400">{error}</p>}
+
+        {/* Actions */}
+        <div className="flex items-center justify-between gap-3">
+          {existingNote ? (
+            <button
+              onClick={handleClear}
+              disabled={saving}
+              className="text-xs text-gray-600 hover:text-red-400 transition-colors disabled:opacity-40"
+            >
+              Clear note
+            </button>
+          ) : <div />}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onClose}
+              className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving || !note.trim()}
+              className="px-4 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg
+                         transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {saving ? 'Saving…' : existingNote ? 'Update' : 'Save'}
+            </button>
+          </div>
+        </div>
+
+        <p className="text-[10px] text-gray-700 -mt-1">⌘↵ to save · Esc to close</p>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
 // ── Mobile card ───────────────────────────────────────────────────────────────
 
-function PositionCard({ p }: { p: any }) {
+function PositionCard({ p, onEdit }: { p: any; onEdit: () => void }) {
   const dailyPP: number | null = p.eff_daily_pp
   const ctx = contextLine(p)
 
   return (
     <div className="px-4 py-2.5 border-b border-border last:border-0">
-      {/* Row 1: badge + symbol + %NAV */}
+      {/* Row 1: badge + symbol + edit + %NAV */}
       <div className="flex items-center gap-2">
         <Badge value={p.strategy} />
         <span className="font-mono font-medium text-gray-100 text-sm leading-tight truncate flex-1 min-w-0">
           {p.symbol}
         </span>
+        <button
+          onClick={onEdit}
+          className="text-gray-700 hover:text-gray-400 transition-colors flex-shrink-0 px-1 py-0.5 text-xs"
+          title="Add / edit note"
+        >
+          ✎
+        </button>
         <span className="text-[10px] text-gray-600 tabular-nums flex-shrink-0">{p.pct_nav}%</span>
       </div>
 
@@ -388,10 +525,19 @@ function PositionCard({ p }: { p: any }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+interface NoteModalState {
+  underlying: string
+  formalFlags: string[]
+  existingNote: string | null
+}
+
 export default function PositionsTable({ positions }: { positions: any[] }) {
+  const router = useRouter()
+
   const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDir, setSortDir] = useState<SortDir>(null)
   const [tip,     setTip]     = useState<{ lines: string[]; x: number; y: number } | null>(null)
+  const [noteModal, setNoteModal] = useState<NoteModalState | null>(null)
 
   const [selStrategies,  setSelStrategies]  = useState<Set<string>>(new Set())
   const [selThemes,      setSelThemes]      = useState<Set<string>>(new Set())
@@ -467,8 +613,32 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
     )
   }
 
+  function openNote(p: any) {
+    setNoteModal({
+      underlying:   p.underlying,
+      formalFlags:  p.flags ?? [],
+      existingNote: p.note ?? null,
+    })
+  }
+
+  function onNoteSaved() {
+    setNoteModal(null)
+    router.refresh()
+  }
+
   return (
     <>
+      {/* Note modal */}
+      {noteModal && (
+        <NoteModal
+          underlying={noteModal.underlying}
+          formalFlags={noteModal.formalFlags}
+          existingNote={noteModal.existingNote}
+          onClose={() => setNoteModal(null)}
+          onSaved={onNoteSaved}
+        />
+      )}
+
       {/* Portal tooltip */}
       {tip && createPortal(
         <div
@@ -519,7 +689,7 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
 
       {/* Mobile card list — shown on small screens */}
       <div className="md:hidden">
-        {rows.map((p: any, i: number) => <PositionCard key={i} p={p} />)}
+        {rows.map((p: any, i: number) => <PositionCard key={i} p={p} onEdit={() => openNote(p)} />)}
         {rows.length === 0 && (
           <div className="px-4 py-8 text-center text-gray-600 text-xs">No positions match</div>
         )}
@@ -585,12 +755,22 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
               const ctx = contextLine(p)
 
               return (
-                <tr key={i} className="hover:bg-white/3 transition-colors">
+                <tr key={i} className="group hover:bg-white/3 transition-colors">
                   <td className="px-4 py-2.5">
                     <div className="flex flex-col gap-0.5 w-[220px] min-w-0">
-                      <span className="font-mono font-medium text-gray-200 leading-tight truncate">
-                        {p.symbol}
-                      </span>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="font-mono font-medium text-gray-200 leading-tight truncate flex-1 min-w-0">
+                          {p.symbol}
+                        </span>
+                        <button
+                          onClick={() => openNote(p)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-600
+                                     hover:text-gray-300 text-[11px] flex-shrink-0 leading-none"
+                          title="Add / edit note"
+                        >
+                          ✎
+                        </button>
+                      </div>
                       {ctx && (
                         <span
                           className={`text-[10px] leading-tight truncate ${ctx.isFlag ? 'text-amber-400/80' : 'text-gray-500'}`}

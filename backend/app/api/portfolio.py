@@ -1,5 +1,7 @@
+from typing import Optional
 from fastapi import APIRouter
-from app.db import query, query_one
+from pydantic import BaseModel
+from app.db import query, query_one, execute
 
 router = APIRouter()
 
@@ -66,7 +68,8 @@ def positions():
             ps.ai_note,
             ps.flags,
             p.assignment_price,
-            pn.note
+            pn.note,
+            pn.suppress_flags
         FROM position_snapshots ps
         JOIN positions p ON p.id = ps.position_id
         LEFT JOIN position_snapshots ps_p
@@ -164,3 +167,40 @@ def wheel_stats():
           AND p.strategy IN ('WheelSP', 'WheelSC')
           AND p.closed_date IS NULL
     """)
+
+
+# ── Position notes ────────────────────────────────────────────────────────────
+
+class NoteBody(BaseModel):
+    note: str
+    suppress_flags: list[str] = []
+    snooze_until: Optional[str] = None
+
+
+@router.post("/positions/{underlying}/note")
+def upsert_position_note(underlying: str, body: NoteBody):
+    """Create or update an acknowledgement note for a position (by underlying)."""
+    snooze = body.snooze_until or None
+    execute("""
+        INSERT INTO position_notes (account_id, underlying, note, suppress_flags, snooze_until, active)
+        VALUES (1, %s, %s, %s, %s, TRUE)
+        ON CONFLICT (account_id, underlying, COALESCE(strategy, ''))
+        DO UPDATE SET
+            note           = EXCLUDED.note,
+            suppress_flags = EXCLUDED.suppress_flags,
+            snooze_until   = EXCLUDED.snooze_until,
+            active         = TRUE,
+            updated_at     = NOW()
+    """, [underlying, body.note, body.suppress_flags, snooze])
+    return {"ok": True}
+
+
+@router.delete("/positions/{underlying}/note")
+def delete_position_note(underlying: str):
+    """Deactivate (soft-delete) the acknowledgement note for a position."""
+    execute("""
+        UPDATE position_notes
+        SET active = FALSE, updated_at = NOW()
+        WHERE account_id = 1 AND underlying = %s AND active = TRUE
+    """, [underlying])
+    return {"ok": True}

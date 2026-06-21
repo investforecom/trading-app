@@ -41,3 +41,17 @@ def query_one(sql: str, params=None) -> dict | None:
         raise
     finally:
         conn.close()
+
+
+def execute(sql: str, params=None) -> None:
+    """Run an INSERT / UPDATE / DELETE without fetching results."""
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params or ())
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
