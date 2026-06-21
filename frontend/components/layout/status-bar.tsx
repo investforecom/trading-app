@@ -94,12 +94,12 @@ export default async function StatusBar() {
     <div className="flex-shrink-0 border-b border-border bg-card/80 backdrop-blur-sm
                     flex items-center gap-4 px-4 md:px-6 py-2.5 overflow-x-auto">
 
-      {/* NAV — always visible */}
+      {/* NAV — always visible; sub shows daily P&L if known, else deployed % */}
       <Field
         label="NAV"
         value={nav}
-        sub={navChange ?? undefined}
-        subColor={changeColor(summary?.daily_pnl)}
+        sub={navChange ?? (deployedPct ? `${deployedPct} dep.` : undefined)}
+        subColor={navChange ? changeColor(summary?.daily_pnl) : 'text-gray-500'}
       />
 
       {/* Secondary fields — hidden on mobile, visible on sm+ */}
