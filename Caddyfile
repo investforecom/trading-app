@@ -11,6 +11,13 @@
         {env.TRADING_APP_USER} {env.TRADING_APP_HASH}
     }
 
+    # SSE endpoint — disable buffering so progress streams immediately
+    handle /api/system/refresh/stream {
+        reverse_proxy api:8000 {
+            flush_interval -1
+        }
+    }
+
     # API → FastAPI
     handle /api/* {
         reverse_proxy api:8000

@@ -19,7 +19,11 @@ def query(sql: str, params=None) -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(sql, params or ())
+            conn.commit()
             return [dict(r) for r in cur.fetchall()]
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -29,7 +33,11 @@ def query_one(sql: str, params=None) -> dict | None:
     try:
         with conn.cursor() as cur:
             cur.execute(sql, params or ())
+            conn.commit()
             row = cur.fetchone()
             return dict(row) if row else None
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()

@@ -3,19 +3,19 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 const nav = [
-  { href: '/',           label: 'Trading',   icon: '📊' },
-  { href: '/analytics',  label: 'Analytics', icon: '📈' },
-  { href: '/weekly',     label: 'Weekly',    icon: '🔍' },
+  { href: '/',          label: 'Positions', icon: '📊' },
+  { href: '/analytics', label: 'Analytics', icon: '📈' },
+  { href: '/weekly',    label: 'Weekly',    icon: '🔍' },
 ]
 
 export default function Sidebar() {
   const path = usePathname()
   return (
-    <aside className="w-52 flex-shrink-0 bg-card border-r border-border flex flex-col">
-      <div className="px-5 py-5 border-b border-border">
+    <>
+      <div className="px-5 py-5 border-b border-border flex-shrink-0">
         <span className="text-sm font-semibold text-gray-200 tracking-wide">TRADING INSIGHTS</span>
       </div>
-      <nav className="flex-1 py-4 space-y-1 px-2">
+      <nav className="py-4 space-y-1 px-2">
         {nav.map(({ href, label, icon }) => {
           const active = path === href
           return (
@@ -30,9 +30,6 @@ export default function Sidebar() {
           )
         })}
       </nav>
-      <div className="px-5 py-4 border-t border-border text-xs text-gray-600">
-        v1.0 · IBKR U15760849
-      </div>
-    </aside>
+    </>
   )
 }

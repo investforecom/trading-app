@@ -8,13 +8,20 @@ router = APIRouter()
 def summary():
     return query_one("""
         SELECT
-            date,
-            nav,
-            ROUND(nav - cash_value - sgov_value, 0)                                       AS deployed,
-            ROUND(100.0 * (nav - cash_value - sgov_value) / NULLIF(nav, 0), 1)            AS deployed_pct
-        FROM account_snapshots
-        WHERE account_id = 1
-        ORDER BY date DESC LIMIT 1
+            a.snapshot_date                                                              AS date,
+            a.nav,
+            ROUND(a.nav - a.cash - a.sgov, 0)                                          AS deployed,
+            ROUND(100.0 * (a.nav - a.cash - a.sgov) / NULLIF(a.nav, 0), 1)            AS deployed_pct,
+            ROUND(a.cash + a.sgov, 0)                                                   AS total_cash,
+            ROUND(a.eff_leverage::numeric, 2)                                           AS eff_leverage,
+            a.updated_at                                                                 AS last_updated,
+            a.daily_pnl,
+            ROUND(
+                100.0 * a.daily_pnl / NULLIF(a.nav - a.daily_pnl, 0), 2
+            )                                                                            AS daily_pnl_pct
+        FROM account_snapshots a
+        WHERE a.account_id = 1
+        ORDER BY a.snapshot_date DESC LIMIT 1
     """)
 
 
@@ -22,11 +29,11 @@ def summary():
 def pnl():
     rows = query("""
         SELECT
-            ROUND(SUM(realized_pnl) FILTER (WHERE EXTRACT(YEAR  FROM close_date) = EXTRACT(YEAR  FROM CURRENT_DATE))::numeric, 0)  AS ytd,
+            ROUND(SUM(realized_pnl) FILTER (WHERE EXTRACT(YEAR  FROM close_date) = EXTRACT(YEAR  FROM CURRENT_DATE)), 0)  AS ytd,
             ROUND(SUM(realized_pnl) FILTER (WHERE EXTRACT(YEAR  FROM close_date) = EXTRACT(YEAR  FROM CURRENT_DATE)
-                                                AND EXTRACT(MONTH FROM close_date) = EXTRACT(MONTH FROM CURRENT_DATE))::numeric, 0) AS mtd,
-            ROUND(SUM(realized_pnl) FILTER (WHERE close_date >= CURRENT_DATE - INTERVAL '1 year')::numeric, 0)                     AS one_year,
-            COUNT(*)               FILTER (WHERE EXTRACT(YEAR  FROM close_date) = EXTRACT(YEAR  FROM CURRENT_DATE))                AS ytd_trades
+                                                AND EXTRACT(MONTH FROM close_date) = EXTRACT(MONTH FROM CURRENT_DATE)), 0) AS mtd,
+            ROUND(SUM(realized_pnl) FILTER (WHERE close_date >= CURRENT_DATE - INTERVAL '1 year'), 0)                     AS one_year,
+            COUNT(*)               FILTER (WHERE EXTRACT(YEAR  FROM close_date) = EXTRACT(YEAR  FROM CURRENT_DATE))       AS ytd_trades
         FROM closed_trades
         WHERE account_id = 1
     """)
@@ -41,11 +48,16 @@ def positions():
             p.underlying,
             p.strategy,
             p.theme,
-            ROUND(ps.qty::numeric, 0)           AS qty,
-            ROUND(ps.cost_basis::numeric, 0)    AS cost,
-            ROUND(ps.current_value::numeric, 0) AS value,
+            ROUND(ps.qty::numeric, 0)                                    AS qty,
+            ROUND(ps.cost_basis::numeric, 0)                             AS cost,
+            ROUND(ps.cost_basis / NULLIF(ps.qty, 0), 2)                 AS avg_price,
+            ROUND(ps.current_value::numeric, 0)                          AS value,
             ROUND(ps.gain_pct::numeric, 1)      AS gain_pct,
             ROUND(ps.pct_nav::numeric, 1)       AS pct_nav,
+            ps.notes                            AS csv_note,
+            ps.ai_note,
+            ps.flags,
+            p.assignment_price,
             pn.note
         FROM position_snapshots ps
         JOIN positions p ON p.id = ps.position_id
@@ -107,4 +119,34 @@ def wheel():
           AND p.strategy IN ('WheelSP', 'WheelSC')
           AND p.closed_date IS NULL
         ORDER BY p.strategy, p.underlying
+    """)
+
+
+@router.get("/wheel-stats")
+def wheel_stats():
+    """Assignment risk + remaining OTM premium for the wheel book."""
+    return query_one("""
+        SELECT
+            -- Capital required if every short put is assigned (strike × 100 × |qty|)
+            ROUND(COALESCE(SUM(
+                CASE WHEN p.strategy = 'WheelSP' AND p.symbol ~ '.*_[0-9.]+P$' THEN
+                    REGEXP_REPLACE(p.symbol, '.*_([0-9.]+)P$', '\\1')::numeric
+                    * 100 * ABS(ps.qty::numeric)
+                END
+            ), 0), 0)                       AS assignment_risk,
+
+            -- NAV improvement if all short options expire OTM worthless
+            -- (current_value is what you avoid paying at close; it flows back into NAV)
+            ROUND(COALESCE(SUM(
+                CASE WHEN p.strategy IN ('WheelSP', 'WheelSC')
+                          AND p.symbol NOT LIKE '%%STK%%' THEN
+                    ps.current_value::numeric
+                END
+            ), 0), 0)                       AS otm_premium
+
+        FROM position_snapshots ps
+        JOIN positions p ON p.id = ps.position_id
+        WHERE ps.snapshot_date = (SELECT MAX(snapshot_date) FROM position_snapshots)
+          AND p.strategy IN ('WheelSP', 'WheelSC')
+          AND p.closed_date IS NULL
     """)

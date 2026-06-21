@@ -33,6 +33,10 @@ services:
       PGDATABASE: trading
       PGUSER: ${POSTGRES_USER}
       PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - /home/char/workspace/dashboard/loader:/loader:ro
+      - /home/char/workspace/trading-routine:/trading-routine:ro
+      - /tmp/trading-sockets:/tmp/trading-sockets
     networks:
       - internal
     depends_on:
