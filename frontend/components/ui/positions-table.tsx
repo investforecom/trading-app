@@ -309,23 +309,35 @@ function SortIcon({ dir }: { dir: SortDir }) {
   return <span className="ml-1 opacity-20">↕</span>
 }
 
+// ── Shared context line ───────────────────────────────────────────────────────
+// Single rule used by both desktop Symbol cell and mobile card:
+//   flagged  → amber flag text (dots stay in Flag column on desktop)
+//   otherwise → grey formatted note
+// Returns null when there is nothing to display.
+
+function contextLine(p: any): { text: string; isFlag: boolean } | null {
+  const { display: splitDisplay, flag: inlineFlag } = splitNote(p.csv_note)
+  const note = formatNote(splitDisplay || null, p.strategy)
+
+  const flagParts: string[] = [
+    ...(p.flags ?? []).map((f: string) => f.replace(/_/g, ' ')),
+    ...(inlineFlag ? [inlineFlag] : []),
+    ...(p.eff_daily_pp != null && Math.abs(p.eff_daily_pp) >= DAILY_VIOLENT
+      ? [`${p.eff_daily_pp > 0 ? '▲' : '▼'} ${fmtDelta(p.eff_daily_pp)} today`] : []),
+    ...(p.weekly_pp != null && Math.abs(p.weekly_pp) >= WEEKLY_VIOLENT
+      ? [`${p.weekly_pp > 0 ? '▲' : '▼'} ${fmtDelta(p.weekly_pp)} this week`] : []),
+  ]
+
+  if (flagParts.length > 0) return { text: flagParts.join(' · '), isFlag: true }
+  if (note)                  return { text: note,                  isFlag: false }
+  return null
+}
+
 // ── Mobile card ───────────────────────────────────────────────────────────────
 
 function PositionCard({ p }: { p: any }) {
-  const { display: splitDisplay, flag: inlineFlag } = splitNote(p.csv_note)
-  const formattedNote = formatNote(splitDisplay || null, p.strategy)
-  const dailyPP: number | null  = p.eff_daily_pp
-  const weeklyPP: number | null = p.weekly_pp ?? null
-
-  // Collect all flag text for inline display (no tooltip needed on touch)
-  const flagLines: string[] = [
-    ...(p.flags ?? []).map((f: string) => f.replace(/_/g, ' ')),
-    ...(inlineFlag ? [inlineFlag] : []),
-    ...(dailyPP != null && Math.abs(dailyPP) >= DAILY_VIOLENT
-      ? [`${dailyPP > 0 ? '▲' : '▼'} ${fmtDelta(dailyPP)} today`] : []),
-    ...(weeklyPP != null && Math.abs(weeklyPP) >= WEEKLY_VIOLENT
-      ? [`${weeklyPP > 0 ? '▲' : '▼'} ${fmtDelta(weeklyPP)} this week`] : []),
-  ]
+  const dailyPP: number | null = p.eff_daily_pp
+  const ctx = contextLine(p)
 
   return (
     <div className="px-4 py-2.5 border-b border-border last:border-0">
@@ -338,15 +350,12 @@ function PositionCard({ p }: { p: any }) {
         <span className="text-[10px] text-gray-600 tabular-nums flex-shrink-0">{p.pct_nav}%</span>
       </div>
 
-      {/*
-        Row 2: single context line — flag text (amber, wrapping) when flags exist,
-        otherwise the formatted note (grey). Never both.
-      */}
-      {flagLines.length > 0 ? (
-        <p className="text-[11px] text-amber-400/80 mt-1 leading-snug">{flagLines.join(' · ')}</p>
-      ) : formattedNote ? (
-        <p className="text-[11px] text-gray-500 mt-1 leading-snug">{formattedNote}</p>
-      ) : null}
+      {/* Row 2: one context line — wraps freely on mobile */}
+      {ctx && (
+        <p className={`text-[11px] mt-1 leading-snug ${ctx.isFlag ? 'text-amber-400/80' : 'text-gray-500'}`}>
+          {ctx.text}
+        </p>
+      )}
 
       {/* Row 3: key metrics */}
       <div className="flex items-end gap-4 mt-2">
@@ -558,13 +567,12 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
 
           <tbody className="divide-y divide-border">
             {rows.map((p: any, i: number) => {
-              const { display: splitDisplay, flag: inlineFlag } = splitNote(p.csv_note)
-              const formattedNote = formatNote(splitDisplay || null, p.strategy)
+              const { flag: inlineFlag } = splitNote(p.csv_note)
 
-              const dailyPP: number | null  = p.eff_daily_pp   // pre-computed in useMemo
+              const dailyPP: number | null  = p.eff_daily_pp
               const weeklyPP: number | null = p.weekly_pp ?? null
 
-              // Violent-move alerts — square dots in Flag column + tooltip lines
+              // Flag-column dots + tooltip — independent of the symbol context line
               const moveAlerts: string[] = []
               if (dailyPP != null && Math.abs(dailyPP) >= DAILY_VIOLENT) {
                 moveAlerts.push(`${dailyPP > 0 ? '▲' : '▼'} ${fmtDelta(dailyPP)} today`)
@@ -573,6 +581,9 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
                 moveAlerts.push(`${weeklyPP > 0 ? '▲' : '▼'} ${fmtDelta(weeklyPP)} this week`)
               }
 
+              // Same rule as mobile cards: amber flag text when flagged, grey note otherwise
+              const ctx = contextLine(p)
+
               return (
                 <tr key={i} className="hover:bg-white/3 transition-colors">
                   <td className="px-4 py-2.5">
@@ -580,14 +591,12 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
                       <span className="font-mono font-medium text-gray-200 leading-tight truncate">
                         {p.symbol}
                       </span>
-                      {formattedNote && (
-                        <span className="text-[10px] text-gray-500 leading-tight truncate" title={p.csv_note}>
-                          {formattedNote}
-                        </span>
-                      )}
-                      {p.ai_note && (
-                        <span className="text-[10px] text-amber-500/70 leading-tight truncate" title={p.ai_note}>
-                          ◈ {p.ai_note}
+                      {ctx && (
+                        <span
+                          className={`text-[10px] leading-tight truncate ${ctx.isFlag ? 'text-amber-400/80' : 'text-gray-500'}`}
+                          title={ctx.text}
+                        >
+                          {ctx.text}
                         </span>
                       )}
                     </div>
