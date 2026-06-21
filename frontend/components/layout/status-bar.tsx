@@ -92,8 +92,9 @@ export default async function StatusBar() {
 
   return (
     <div className="flex-shrink-0 border-b border-border bg-card/80 backdrop-blur-sm
-                    flex items-center gap-4 px-6 py-2.5">
+                    flex items-center gap-4 px-4 md:px-6 py-2.5 overflow-x-auto">
 
+      {/* NAV — always visible */}
       <Field
         label="NAV"
         value={nav}
@@ -101,35 +102,33 @@ export default async function StatusBar() {
         subColor={changeColor(summary?.daily_pnl)}
       />
 
-      <Divider />
+      {/* Secondary fields — hidden on mobile, visible on sm+ */}
+      <div className="hidden sm:contents">
+        <Divider />
+        <Field
+          label="Deployed"
+          value={deployedUSD}
+          sub={deployedPct ?? undefined}
+        />
+        <Field
+          label="Cash"
+          value={cashUSD}
+          sub={cashPct ?? undefined}
+        />
+        <Divider />
+        <Field
+          label="Assign Risk"
+          value={assignRisk}
+        />
+        <Field
+          label="SP Lev"
+          value={effLev}
+          valueColor={levColor(effLevNum)}
+        />
+      </div>
 
-      <Field
-        label="Deployed"
-        value={deployedUSD}
-        sub={deployedPct ?? undefined}
-      />
-
-      <Field
-        label="Cash"
-        value={cashUSD}
-        sub={cashPct ?? undefined}
-      />
-
-      <Divider />
-
-      <Field
-        label="Assign Risk"
-        value={assignRisk}
-      />
-
-      <Field
-        label="SP Lev"
-        value={effLev}
-        valueColor={levColor(effLevNum)}
-      />
-
-      {/* Live Sydney clock */}
-      <div className="ml-auto flex flex-col gap-px items-end">
+      {/* Live Sydney clock — always visible */}
+      <div className="ml-auto flex flex-col gap-px items-end flex-shrink-0">
         <span className="text-[10px] font-medium text-gray-500 uppercase tracking-widest leading-none">Sydney</span>
         <span className="text-xs text-gray-400 tabular-nums leading-none"><LiveClock /></span>
       </div>

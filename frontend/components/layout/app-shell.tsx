@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 interface AppShellProps {
   sidebar: React.ReactNode
@@ -10,6 +10,11 @@ interface AppShellProps {
 
 export default function AppShell({ sidebar, statusBar, children }: AppShellProps) {
   const [open, setOpen] = useState(true)
+
+  // Close sidebar by default on mobile after first paint
+  useEffect(() => {
+    if (window.innerWidth < 768) setOpen(false)
+  }, [])
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -31,7 +36,7 @@ export default function AppShell({ sidebar, statusBar, children }: AppShellProps
           onClick={() => setOpen(o => !o)}
           title={open ? 'Collapse sidebar' : 'Expand sidebar'}
           className="absolute top-5 left-0 -translate-x-1/2
-                     w-5 h-5 bg-card border border-border rounded-full
+                     w-7 h-7 md:w-5 md:h-5 bg-card border border-border rounded-full
                      flex items-center justify-center
                      text-gray-500 hover:text-gray-300 hover:border-gray-500
                      text-[11px] transition-colors shadow-sm"
@@ -43,7 +48,7 @@ export default function AppShell({ sidebar, statusBar, children }: AppShellProps
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {statusBar}
-        <main className="flex-1 overflow-y-auto p-6 bg-surface">
+        <main className="flex-1 overflow-y-auto p-3 md:p-6 bg-surface">
           {children}
         </main>
       </div>

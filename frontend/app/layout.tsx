@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import AppShell from '@/components/layout/app-shell'
 import Sidebar from '@/components/layout/sidebar'
@@ -8,6 +8,11 @@ import StatusBar from '@/components/layout/status-bar'
 export const metadata: Metadata = {
   title: 'Trading Insights',
   description: 'Personal trading intelligence system',
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

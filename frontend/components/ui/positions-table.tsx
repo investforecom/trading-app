@@ -263,6 +263,11 @@ function MultiSelect({ label, options, selected, onToggle }: {
   )
 }
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const DAILY_VIOLENT  = 5   // pp threshold for daily violent-move flag
+const WEEKLY_VIOLENT = 10  // pp threshold for weekly violent-move flag
+
 // ── Formatters ────────────────────────────────────────────────────────────────
 
 function gainColor(v: number | null | undefined) {
@@ -302,6 +307,76 @@ function SortIcon({ dir }: { dir: SortDir }) {
   if (dir === 'asc')  return <span className="ml-1 opacity-80">↑</span>
   if (dir === 'desc') return <span className="ml-1 opacity-80">↓</span>
   return <span className="ml-1 opacity-20">↕</span>
+}
+
+// ── Mobile card ───────────────────────────────────────────────────────────────
+
+function PositionCard({ p }: { p: any }) {
+  const { display: splitDisplay, flag: inlineFlag } = splitNote(p.csv_note)
+  const formattedNote = formatNote(splitDisplay || null, p.strategy)
+  const dailyPP: number | null  = p.eff_daily_pp
+  const weeklyPP: number | null = p.weekly_pp ?? null
+
+  // Collect all flag text for inline display (no tooltip needed on touch)
+  const flagLines: string[] = [
+    ...(p.flags ?? []).map((f: string) => f.replace(/_/g, ' ')),
+    ...(inlineFlag ? [inlineFlag] : []),
+    ...(dailyPP != null && Math.abs(dailyPP) >= DAILY_VIOLENT
+      ? [`${dailyPP > 0 ? '▲' : '▼'} ${fmtDelta(dailyPP)} today`] : []),
+    ...(weeklyPP != null && Math.abs(weeklyPP) >= WEEKLY_VIOLENT
+      ? [`${weeklyPP > 0 ? '▲' : '▼'} ${fmtDelta(weeklyPP)} this week`] : []),
+  ]
+
+  return (
+    <div className="px-4 py-3 border-b border-border last:border-0">
+      {/* Row 1: badge + symbol + %NAV */}
+      <div className="flex items-center gap-2 mb-1">
+        <Badge value={p.strategy} />
+        <span className="font-mono font-medium text-gray-100 text-sm leading-tight truncate flex-1 min-w-0">
+          {p.symbol}
+        </span>
+        <span className="text-[10px] text-gray-600 tabular-nums flex-shrink-0">{p.pct_nav}%</span>
+      </div>
+
+      {/* Row 2: note sub-text */}
+      {formattedNote && (
+        <p className="text-[11px] text-gray-500 mb-2 leading-snug">{formattedNote}</p>
+      )}
+
+      {/* Row 3: key metrics */}
+      <div className="flex items-end gap-4">
+        <div>
+          <div className="text-[9px] text-gray-600 uppercase tracking-wider">Value</div>
+          <div className="text-xs text-gray-200 tabular-nums font-medium">${Number(p.value).toLocaleString()}</div>
+        </div>
+        <div>
+          <div className="text-[9px] text-gray-600 uppercase tracking-wider">Gain</div>
+          <div className={`text-xs tabular-nums font-medium ${gainColor(p.gain_pct)}`}>
+            {p.gain_pct > 0 ? '+' : ''}{p.gain_pct}%
+          </div>
+        </div>
+        {dailyPP != null && (
+          <div>
+            <div className="text-[9px] text-gray-600 uppercase tracking-wider">Day</div>
+            <div className={`text-xs tabular-nums ${deltaColor(dailyPP)}`}>
+              {fmtDelta(dailyPP)}{Math.abs(dailyPP) >= DAILY_VIOLENT ? ' ⚡' : ''}
+            </div>
+          </div>
+        )}
+        <div className="ml-auto text-right">
+          <div className="text-[9px] text-gray-600 uppercase tracking-wider">Qty</div>
+          <div className="text-xs text-gray-500 tabular-nums">{p.qty}</div>
+        </div>
+      </div>
+
+      {/* Row 4: flags — shown as text, no hover needed on touch */}
+      {flagLines.length > 0 && (
+        <p className="mt-1.5 text-[11px] text-amber-400/80 leading-snug">
+          {flagLines.join(' · ')}
+        </p>
+      )}
+    </div>
+  )
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -435,8 +510,36 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
         )}
       </div>
 
-      {/* Table */}
-      <div className="overflow-x-auto">
+      {/* Mobile card list — shown on small screens */}
+      <div className="md:hidden">
+        {rows.map((p: any, i: number) => <PositionCard key={i} p={p} />)}
+        {rows.length === 0 && (
+          <div className="px-4 py-8 text-center text-gray-600 text-xs">No positions match</div>
+        )}
+        {/* Mobile total */}
+        <div className="px-4 py-3 bg-white/[0.015] border-t-2 border-border/60 flex items-center justify-between gap-4">
+          <span className="text-xs text-gray-500">
+            Total ({rows.length}{hasFilters ? ` of ${(positions ?? []).length}` : ''})
+          </span>
+          <div className="flex gap-4">
+            <div className="text-right">
+              <div className="text-[9px] text-gray-600 uppercase tracking-wider">Cost</div>
+              <div className="text-xs text-gray-300 tabular-nums font-semibold">${totals.cost.toLocaleString()}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-[9px] text-gray-600 uppercase tracking-wider">Value</div>
+              <div className="text-xs text-gray-300 tabular-nums font-semibold">${totals.value.toLocaleString()}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-[9px] text-gray-600 uppercase tracking-wider">%NAV</div>
+              <div className="text-xs text-gray-400 tabular-nums font-semibold">{totals.pctNav.toFixed(1)}%</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Desktop table — hidden on small screens */}
+      <div className="hidden md:block overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-xs text-gray-500 uppercase tracking-wider">
@@ -464,14 +567,12 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
               const weeklyPP: number | null = p.weekly_pp ?? null
 
               // Violent-move alerts — square dots in Flag column + tooltip lines
-              const DAILY_VIOLENT  = 5   // pp threshold for daily flag
-              const WEEKLY_VIOLENT = 10  // pp threshold for weekly flag
               const moveAlerts: string[] = []
               if (dailyPP != null && Math.abs(dailyPP) >= DAILY_VIOLENT) {
-                moveAlerts.push(`${dailyPP > 0 ? '▲' : '▼'} ${fmtDelta(dailyPP)}pp today`)
+                moveAlerts.push(`${dailyPP > 0 ? '▲' : '▼'} ${fmtDelta(dailyPP)} today`)
               }
               if (weeklyPP != null && Math.abs(weeklyPP) >= WEEKLY_VIOLENT) {
-                moveAlerts.push(`${weeklyPP > 0 ? '▲' : '▼'} ${fmtDelta(weeklyPP)}pp this week`)
+                moveAlerts.push(`${weeklyPP > 0 ? '▲' : '▼'} ${fmtDelta(weeklyPP)} this week`)
               }
 
               return (
