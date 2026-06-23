@@ -3,9 +3,10 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 const nav = [
-  { href: '/',          label: 'Positions', icon: '📊' },
-  { href: '/analytics', label: 'Analytics', icon: '📈' },
-  { href: '/weekly',    label: 'Weekly',    icon: '🔍' },
+  { href: '/',          label: 'Positions',      icon: '📊' },
+  { href: '/briefing',  label: 'Daily Briefing', icon: '📋' },
+  { href: '/analytics', label: 'Analytics',      icon: '📈' },
+  { href: '/weekly',    label: 'Weekly',         icon: '🔍' },
 ]
 
 export default function Sidebar() {

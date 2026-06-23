@@ -37,6 +37,9 @@ export const api = {
       post(`/portfolio/positions/${encodeURIComponent(underlying)}/note`, body),
     deleteNote: (underlying: string) =>
       del(`/portfolio/positions/${encodeURIComponent(underlying)}/note`),
+    latestBriefing: () => get<any>('/portfolio/briefing/latest'),
+    briefings:      () => get<any[]>('/portfolio/briefings'),
+    briefingByDate: (date: string) => get<any>(`/portfolio/briefing/${date}`),
   },
   analytics: {
     scorecard:  () => get<any[]>('/analytics/scorecard'),

@@ -169,6 +169,39 @@ def wheel_stats():
     """)
 
 
+# ── Briefings ────────────────────────────────────────────────────────────────
+
+@router.get("/briefing/latest")
+def latest_briefing():
+    return query_one("""
+        SELECT date, nav, deployed_pct, eff_lev, wheel_cover, commentary,
+               market_summary, wheel_section, watchlist, briefing_md
+        FROM daily_briefings
+        WHERE account_id = 1
+        ORDER BY date DESC LIMIT 1
+    """)
+
+
+@router.get("/briefings")
+def briefings_list():
+    return query("""
+        SELECT date, nav, deployed_pct, eff_lev
+        FROM daily_briefings
+        WHERE account_id = 1
+        ORDER BY date DESC LIMIT 30
+    """)
+
+
+@router.get("/briefing/{date}")
+def briefing_by_date(date: str):
+    return query_one("""
+        SELECT date, nav, deployed_pct, eff_lev, wheel_cover, commentary,
+               market_summary, wheel_section, watchlist, briefing_md
+        FROM daily_briefings
+        WHERE account_id = 1 AND date = %s
+    """, [date])
+
+
 # ── Position notes ────────────────────────────────────────────────────────────
 
 class NoteBody(BaseModel):
