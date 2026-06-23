@@ -39,6 +39,9 @@ export PGPASSWORD="$POSTGRES_PASSWORD"
 # --- Step 1: Pull latest repo ---
 echo "→ Pulling trading-routine"
 git -C "$REPO_DIR" checkout main
+# Stash any local changes (account_state.json written by previous claude -p run,
+# position_ai_notes.json etc.) — the routine regenerates them fresh each run.
+git -C "$REPO_DIR" stash --include-untracked 2>/dev/null || true
 git -C "$REPO_DIR" pull --rebase origin main
 
 # --- Step 2: Run Routine A via claude -p ---

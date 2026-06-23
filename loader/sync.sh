@@ -16,6 +16,8 @@ ENV_FILE="${ENV_FILE:-/home/char/workspace/dashboard/.env}"
 echo "=== $(date -u '+%Y-%m-%dT%H:%M:%SZ') ==="
 
 echo "→ Pulling trading-routine repo"
+# Stash any local changes before pulling (account_state.json etc. are regenerated each run)
+git -C "$REPO_DIR" stash --include-untracked 2>/dev/null || true
 git -C "$REPO_DIR" pull --rebase origin main
 
 # ---------------------------------------------------------------------------
