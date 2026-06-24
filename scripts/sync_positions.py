@@ -5,14 +5,12 @@ Deterministic positions updater — writes directly to Postgres.
 Reads ibkr_positions.json + account_state.json (local temp files written by
 the bridge's claude -p step), then:
   1. Upserts account_snapshots with today's NAV / cash / P&L
-  2. Matches each open DB position against live IBKR data
-  3. Upserts position_snapshots (current_value / gain_pct / pct_nav for today)
+  2. Matches each open DB position against live IBKR data, updating
+     current_value, gain_pct, pct_nav, AND qty (from IBKR, not DB)
+  3. Auto-creates new positions for short options in IBKR that have no DB row
+     (strategy inferred: short PUT → WheelSP, short CALL → WheelSC)
 
 No CSV, no git. The DB is the single source of truth.
-
-Env / connection: reads TRADING_APP_DIR from environment (defaults to
-~/workspace/trading-app) to find the .env file for PG credentials.
-Alternatively set PGHOST / PGPORT / PGUSER / PGPASSWORD / PGDATABASE directly.
 """
 
 import json
@@ -31,11 +29,12 @@ import routine_log as rlog
 ROUTINE_DIR = Path.home() / "workspace" / "trading-routine"
 APP_DIR     = Path(os.environ.get("TRADING_APP_DIR", Path.home() / "workspace" / "trading-app"))
 
+OPT_RE = re.compile(r"(\w+)\s+([A-Za-z]{3})(\d{2})'(\d{2})\s+([\d.]+)\s+(CALL|PUT)")
+
 
 # ── DB connection ─────────────────────────────────────────────────────────────
 
 def _load_env(app_dir: Path) -> dict:
-    """Parse key=value pairs from .env, skip comments."""
     env: dict = {}
     env_path = app_dir / ".env"
     if env_path.exists():
@@ -45,7 +44,6 @@ def _load_env(app_dir: Path) -> dict:
                 continue
             if "=" in line:
                 k, _, v = line.partition("=")
-                # Strip inline comments
                 v = v.split("#")[0].strip()
                 env[k.strip()] = v
     return env
@@ -54,11 +52,11 @@ def _load_env(app_dir: Path) -> dict:
 def _connect(app_dir: Path = APP_DIR):
     env = _load_env(app_dir)
     return psycopg2.connect(
-        host    = os.environ.get("PGHOST",     env.get("PGHOST",     "127.0.0.1")),
-        port    = int(os.environ.get("PGPORT", env.get("PGPORT",     "5432"))),
-        dbname  = os.environ.get("PGDATABASE", env.get("PGDATABASE", "trading")),
-        user    = os.environ.get("PGUSER",     env.get("PGUSER",     env.get("POSTGRES_USER", "trading"))),
-        password= os.environ.get("PGPASSWORD", env.get("PGPASSWORD", env.get("POSTGRES_PASSWORD", ""))),
+        host     = os.environ.get("PGHOST",     env.get("PGHOST",     "127.0.0.1")),
+        port     = int(os.environ.get("PGPORT", env.get("PGPORT",     "5432"))),
+        dbname   = os.environ.get("PGDATABASE", env.get("PGDATABASE", "trading")),
+        user     = os.environ.get("PGUSER",     env.get("PGUSER",     env.get("POSTGRES_USER", "trading"))),
+        password = os.environ.get("PGPASSWORD", env.get("PGPASSWORD", env.get("POSTGRES_PASSWORD", ""))),
         cursor_factory=psycopg2.extras.RealDictCursor,
     )
 
@@ -69,37 +67,48 @@ def index_ibkr_positions(positions: list[dict]) -> tuple[dict, dict, dict]:
     """
     Build lookup dicts from raw IBKR position list.
 
-    stocks:   ticker → market_value (native currency; GBP needs conversion)
-    opts:     (underlying, year2, strike, "CALL"|"PUT") → market_value USD
-    opts_day: (underlying, mon3, day2, strike, "CALL"|"PUT") → market_value
-              for weeklies like "ONDS Jul02'26 10.5 CALL"
-    """
-    stocks:   dict[str, float] = {}
-    opts:     dict[tuple, float] = {}
-    opts_day: dict[tuple, float] = {}
+    Each dict value is {"mv": float, "qty": int} where qty is signed
+    (positive = long, negative = short) from the IBKR position field.
 
-    OPT_RE = re.compile(r"(\w+)\s+([A-Za-z]{3})(\d{2})'(\d{2})\s+([\d.]+)\s+(CALL|PUT)")
+    stocks:   ticker → {mv, qty}
+    opts:     (underlying, year2, strike, CP) → {mv, qty}
+    opts_day: (underlying, mon3, day2, strike, CP) → {mv, qty}  ← weeklies
+    """
+    stocks:   dict[str, dict] = {}
+    opts:     dict[tuple, dict] = {}
+    opts_day: dict[tuple, dict] = {}
 
     for p in positions:
-        desc  = p["contract_description"]
-        asset = p["asset_class"]
-        mv    = float(p["market_value"])
+        desc    = p["contract_description"]
+        asset   = p["asset_class"]
+        mv      = float(p["market_value"])
+        ibkr_qty = int(float(p.get("position", 0) or 0))
 
         if asset == "STK":
             ticker = desc.split()[0]
-            stocks[ticker] = stocks.get(ticker, 0.0) + mv
+            if ticker not in stocks:
+                stocks[ticker] = {"mv": 0.0, "qty": 0}
+            stocks[ticker]["mv"]  += mv
+            stocks[ticker]["qty"] += ibkr_qty
 
         elif asset == "OPT":
             m = OPT_RE.match(desc)
             if m:
                 und    = m.group(1).upper()
-                mon3   = m.group(2).upper()   # "JUL"
-                day2   = m.group(3)           # "02"
-                year2  = m.group(4)           # "26"
-                strike = m.group(5)           # "10.5"
-                cp     = m.group(6)           # "CALL"
-                opts[(und, year2, strike, cp)]             = opts.get((und, year2, strike, cp), 0.0) + mv
-                opts_day[(und, mon3, day2, strike, cp)]   = opts_day.get((und, mon3, day2, strike, cp), 0.0) + mv
+                mon3   = m.group(2).upper()
+                day2   = m.group(3)
+                year2  = m.group(4)
+                strike = m.group(5)
+                cp     = m.group(6)
+
+                key_yr  = (und, year2, strike, cp)
+                key_day = (und, mon3, day2, strike, cp)
+
+                for key, d in [(key_yr, opts), (key_day, opts_day)]:
+                    if key not in d:
+                        d[key] = {"mv": 0.0, "qty": 0}
+                    d[key]["mv"]  += mv
+                    d[key]["qty"] += ibkr_qty
 
     return stocks, opts, opts_day
 
@@ -112,14 +121,16 @@ def resolve_current_value(
     opts: dict,
     opts_day: dict,
     fx_gbp: float = 1.32,
-) -> float | None:
+    consumed: set | None = None,
+) -> tuple[float | None, int | None]:
     """
-    Return live current_value for a position row, or None if no IBKR match.
+    Return (current_value, ibkr_qty) for a position, or (None, None) if no match.
 
-    Convention (matches existing DB / CSV convention):
-      - Long positions:  current_value = market_value (positive)
-      - Short options:   current_value = abs(market_value) — the buyback cost
-      - Spreads:         current_value = sum of both legs (net value, can be small)
+    ibkr_qty is the live contract/share count from IBKR (always positive; the
+    sign is conveyed by the position's qty column in the DB).
+
+    Keys consumed during matching are added to the `consumed` set so
+    auto_create_missing_options can skip them.
     """
     STOCK_STRATEGIES = {"Thematic", "2x-ETF", "cash"}
     sym   = symbol.upper()
@@ -133,44 +144,63 @@ def resolve_current_value(
     )
 
     if is_stock:
-        mv = stocks.get(underlying)
-        if mv is None:
-            return None
-        # IQE trades on LSE in GBP — apply FX
-        return mv * fx_gbp if underlying == "IQE" else mv
+        entry = stocks.get(underlying)
+        if entry is None:
+            return None, None
+        mv  = entry["mv"]
+        qty = abs(entry["qty"])
+        cv  = mv * fx_gbp if underlying == "IQE" else mv
+        return cv, qty
 
     if len(parts) < 3:
-        return None
+        return None, None
 
     und   = parts[0]
     monyy = parts[1]
     year2 = monyy[3:]
 
-    # Parse strikes from last segment: "170C270C" → [(170,CALL),(270,CALL)]
     legs = [(s, "CALL" if t == "C" else "PUT") for s, t in re.findall(r"([\d.]+)([CP])", parts[2])]
-
     if not legs:
-        return None
+        return None, None
 
     if len(legs) == 1:
         strike, cp = legs[0]
-        mv = opts.get((und, year2, strike, cp))
-        if mv is None:
-            # Try day-based key for weeklies (e.g. ONDS_JUL02_10.5C)
-            mon3 = monyy[:3].upper()
-            mv = opts_day.get((und, mon3, year2, strike, cp))
-        if mv is None:
-            return None
-        return abs(mv) if mv < 0 else mv
+        key_yr  = (und, year2, strike, cp)
+        entry   = opts.get(key_yr)
+        hit_key = key_yr
+
+        if entry is None:
+            mon3    = monyy[:3].upper()
+            key_day = (und, mon3, year2, strike, cp)
+            entry   = opts_day.get(key_day)
+            hit_key = key_day
+
+        if entry is None:
+            return None, None
+
+        if consumed is not None:
+            consumed.add(hit_key)
+
+        mv  = entry["mv"]
+        qty = abs(entry["qty"])
+        return abs(mv) if mv < 0 else mv, qty
+
     else:
+        # Spread: sum legs, take qty from first matched leg
         total   = 0.0
         matched = 0
+        qty     = None
         for strike, cp in legs:
-            mv = opts.get((und, year2, strike, cp))
-            if mv is not None:
-                total += mv
+            key = (und, year2, strike, cp)
+            entry = opts.get(key)
+            if entry is not None:
+                total   += entry["mv"]
                 matched += 1
-        return total if matched > 0 else None
+                if qty is None:
+                    qty = abs(entry["qty"])
+                if consumed is not None:
+                    consumed.add(key)
+        return (total, qty) if matched > 0 else (None, None)
 
 
 # ── DB upserts ───────────────────────────────────────────────────────────────
@@ -210,9 +240,14 @@ def upsert_position_snapshots(
     today: str,
     fx_gbp: float,
     owner_id: int = 1,
-) -> tuple[int, int]:
-    updated = 0
-    missed  = 0
+) -> tuple[int, int, set]:
+    """
+    Returns (updated, missed, consumed_keys).
+    consumed_keys: IBKR opt index keys matched to existing DB positions.
+    """
+    updated  = 0
+    missed   = 0
+    consumed: set = set()
 
     for pos in positions_db:
         pid        = pos["id"]
@@ -220,12 +255,20 @@ def upsert_position_snapshots(
         strategy   = pos["strategy"]
         underlying = pos["underlying"]
         cost_basis = float(pos["cost_basis"] or 0)
-        qty        = int(pos["qty"] or 0)
+        db_qty     = int(pos["qty"] or 0)
 
-        cv = resolve_current_value(symbol, strategy, underlying, stocks, opts, opts_day, fx_gbp)
+        cv, ibkr_qty = resolve_current_value(
+            symbol, strategy, underlying, stocks, opts, opts_day, fx_gbp, consumed
+        )
         if cv is None:
             missed += 1
             continue
+
+        # Use live IBKR qty; fall back to DB qty if IBKR didn't return one
+        qty = ibkr_qty if ibkr_qty is not None else abs(db_qty)
+        # Preserve sign from DB (short positions are negative)
+        if db_qty < 0:
+            qty = -qty
 
         if qty < 0:
             gain_pct = round((cost_basis - cv) / abs(cost_basis) * 100, 4) if cost_basis else 0
@@ -265,7 +308,120 @@ def upsert_position_snapshots(
         })
         updated += 1
 
-    return updated, missed
+    return updated, missed, consumed
+
+
+def auto_create_missing_options(
+    cur,
+    positions_raw: list[dict],
+    consumed: set,
+    nav: float,
+    today: str,
+    account_id: int = 1,
+    owner_id: int = 1,
+) -> int:
+    """
+    Create position + snapshot rows for short options in IBKR with no DB entry.
+
+    Only processes single-leg short options (negative IBKR position).
+    Strategy is inferred: short PUT → WheelSP, short CALL → WheelSC.
+    cost_basis = average_price × |qty| × 100 (premium received).
+
+    Returns the number of new positions created.
+    """
+    created = 0
+
+    for p in positions_raw:
+        if p["asset_class"] != "OPT":
+            continue
+
+        ibkr_qty = int(float(p.get("position", 0) or 0))
+        if ibkr_qty >= 0:
+            continue  # only auto-create short options
+
+        desc = p["contract_description"]
+        m = OPT_RE.match(desc)
+        if not m:
+            continue
+
+        und    = m.group(1).upper()
+        mon3   = m.group(2).upper()
+        day2   = m.group(3)
+        year2  = m.group(4)
+        strike = m.group(5)
+        cp     = m.group(6)
+
+        key_yr  = (und, year2, strike, cp)
+        key_day = (und, mon3, day2, strike, cp)
+
+        # Skip if already matched to an existing DB position
+        if key_yr in consumed or key_day in consumed:
+            continue
+
+        # Mark consumed so we don't double-process
+        consumed.add(key_yr)
+        consumed.add(key_day)
+
+        cp_char  = "C" if cp == "CALL" else "P"
+        symbol   = f"{und}_{mon3}{day2}_{strike}{cp_char}"
+        strategy = "WheelSP" if cp == "PUT" else "WheelSC"
+
+        avg_price = float(p.get("average_price", 0) or 0)
+        mv        = float(p["market_value"])
+        abs_qty   = abs(ibkr_qty)
+
+        if avg_price > 0:
+            cost_basis = round(avg_price * abs_qty * 100, 2)
+        else:
+            cost_basis = round(abs(mv), 2)
+
+        current_value = round(abs(mv), 2)
+        gain_pct = round((cost_basis - current_value) / cost_basis * 100, 4) if cost_basis else 0
+        pct_nav  = round(current_value / nav * 100, 4) if nav else 0
+
+        # Upsert position row (may already exist if closed and reopened)
+        cur.execute("""
+            INSERT INTO positions
+                (owner_id, account_id, symbol, underlying, strategy,
+                 opened_date, qty_at_open, cost_basis_at_open, source)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'ibkr-auto')
+            ON CONFLICT (account_id, symbol) WHERE closed_date IS NULL DO NOTHING
+            RETURNING id
+        """, (owner_id, account_id, symbol, und, strategy,
+              today, abs_qty, cost_basis))
+        row = cur.fetchone()
+
+        if row is None:
+            # Position already existed (ON CONFLICT DO NOTHING)
+            cur.execute("""
+                SELECT id FROM positions
+                WHERE account_id = %s AND symbol = %s AND closed_date IS NULL
+            """, (account_id, symbol))
+            row = cur.fetchone()
+            if row is None:
+                continue
+
+        position_id = row["id"]
+
+        cur.execute("""
+            INSERT INTO position_snapshots
+                (position_id, owner_id, snapshot_date,
+                 qty, cost_basis, current_value, gain_pct, pct_nav)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (position_id, snapshot_date) DO UPDATE SET
+                current_value = EXCLUDED.current_value,
+                gain_pct      = EXCLUDED.gain_pct,
+                pct_nav       = EXCLUDED.pct_nav,
+                qty           = EXCLUDED.qty
+        """, (position_id, owner_id, today,
+              -abs_qty, cost_basis, current_value, gain_pct, pct_nav))
+
+        msg = f"auto-created: {symbol} | strategy={strategy} | qty={abs_qty} | cost_basis=${cost_basis:.2f}"
+        print(f"  {msg}")
+        rlog.ok(msg)
+        created += 1
+
+    return created
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -281,10 +437,10 @@ def run(routine_dir: Path = ROUTINE_DIR) -> bool:
         print("ERROR: ibkr_positions.json not found", file=sys.stderr)
         return False
 
-    state     = json.loads(state_path.read_text())
-    nav       = float(state["nav"])
-    today     = state.get("date") or date.today().isoformat()
-    fx_gbp    = float(state.get("fx_gbp", 1.32))
+    state         = json.loads(state_path.read_text())
+    nav           = float(state["nav"])
+    today         = state.get("date") or date.today().isoformat()
+    fx_gbp        = float(state.get("fx_gbp", 1.32))
     positions_raw = json.loads(ibkr_path.read_text())["positions"]
 
     stocks, opts, opts_day = index_ibkr_positions(positions_raw)
@@ -294,10 +450,9 @@ def run(routine_dir: Path = ROUTINE_DIR) -> bool:
         with conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-            # 1. Account snapshot
             upsert_account_snapshot(cur, state)
 
-            # 2. Load open positions metadata from DB
+            # Load open positions from DB (most recent snapshot for cost_basis ref)
             cur.execute("""
                 SELECT p.id, p.symbol, p.underlying, p.strategy,
                        ps.cost_basis, ps.qty
@@ -313,12 +468,15 @@ def run(routine_dir: Path = ROUTINE_DIR) -> bool:
             """)
             positions_db = list(cur.fetchall())
 
-            # 3. Match and upsert snapshots for today
-            updated, missed = upsert_position_snapshots(
+            updated, missed, consumed = upsert_position_snapshots(
                 cur, positions_db, stocks, opts, opts_day, nav, today, fx_gbp
             )
 
-        msg = f"positions: {updated} updated, {missed} no IBKR match"
+            created = auto_create_missing_options(
+                cur, positions_raw, consumed, nav, today
+            )
+
+        msg = f"positions: {updated} updated, {created} auto-created, {missed} no IBKR match"
         print(f"  {msg}")
         print(f"  snapshot date: {today}")
         rlog.ok(msg)
@@ -328,6 +486,7 @@ def run(routine_dir: Path = ROUTINE_DIR) -> bool:
 
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
+        rlog.error(str(e))
         return False
     finally:
         conn.close()
