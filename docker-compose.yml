@@ -33,6 +33,7 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - /home/char/workspace/trading-routine:/trading-routine:ro
+      - /home/char/logs:/app/logs
       - /tmp/trading-sockets:/tmp/trading-sockets
     networks:
       - internal

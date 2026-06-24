@@ -25,6 +25,9 @@ from pathlib import Path
 import psycopg2
 import psycopg2.extras
 
+sys.path.insert(0, str(Path(__file__).parent))
+import routine_log as rlog
+
 ROUTINE_DIR = Path.home() / "workspace" / "trading-routine"
 APP_DIR     = Path(os.environ.get("TRADING_APP_DIR", Path.home() / "workspace" / "trading-app"))
 
@@ -192,7 +195,9 @@ def upsert_account_snapshot(cur, state: dict, account_id: int = 1, owner_id: int
         RETURNING snapshot_date, nav
     """, {**state, "owner_id": owner_id, "account_id": account_id})
     row = cur.fetchone()
-    print(f"  account_snapshot {row['snapshot_date']} → NAV ${row['nav']:,.0f} ✓")
+    msg = f"account_snapshot {row['snapshot_date']} → NAV ${row['nav']:,.0f} ✓"
+    print(f"  {msg}")
+    rlog.ok(msg)
 
 
 def upsert_position_snapshots(
@@ -313,8 +318,12 @@ def run(routine_dir: Path = ROUTINE_DIR) -> bool:
                 cur, positions_db, stocks, opts, opts_day, nav, today, fx_gbp
             )
 
-        print(f"  positions: {updated} updated, {missed} no IBKR match")
+        msg = f"positions: {updated} updated, {missed} no IBKR match"
+        print(f"  {msg}")
         print(f"  snapshot date: {today}")
+        rlog.ok(msg)
+        if missed:
+            rlog.warn(f"{missed} position(s) had no IBKR match — check symbol mapping")
         return True
 
     except Exception as e:

@@ -22,8 +22,12 @@ import json
 import os
 import subprocess
 import socket
+import sys
 import threading
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(__file__))
+import routine_log as rlog
 
 SOCKET_DIR   = "/tmp/trading-sockets"
 SOCKET_PATH  = f"{SOCKET_DIR}/ibkr-refresh.sock"
@@ -158,40 +162,55 @@ def _run_notes_background():
 def handle(conn: socket.socket):
     try:
         # ── STEP 1: claude -p → account_state.json + ibkr_positions.json ─
+        rlog.phase("IBKR Fetch")
         emit(conn, {"log": "Fetching IBKR account data..."})
-        ok = _run_claude(PROMPT_STEP1, ALLOWED_TOOLS_STEP1, "10", conn)
-        if not ok:
+        rlog.info("Running claude -p (4 MCP calls)...")
+        fetch_ok = _run_claude(PROMPT_STEP1, ALLOWED_TOOLS_STEP1, "10", conn)
+        if not fetch_ok:
+            rlog.error("IBKR fetch failed — claude -p returned error")
             emit(conn, {"error": "IBKR fetch failed — check claude output"})
             return
 
         if not Path(STATE_OUT).exists() or not Path(IBKR_POS_OUT).exists():
+            rlog.error("claude ran but output files not found")
             emit(conn, {"error": "claude ran but output files not found"})
             return
 
+        rlog.ok("account_state.json + ibkr_positions.json written ✓")
         emit(conn, {"log": "account_state.json + ibkr_positions.json written ✓"})
 
-        # ── STEP 2: Python → open_positions.csv ─────────────────────────
-        emit(conn, {"log": "Updating positions CSV with live prices..."})
+        # ── STEP 2: sync_positions.py → DB ──────────────────────────────
+        rlog.phase("DB Sync")
+        emit(conn, {"log": "Updating positions in DB..."})
         result = subprocess.run(
             ["python3", f"{SCRIPTS_DIR}/sync_positions.py"],
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode == 0:
-            emit(conn, {"log": result.stdout.strip() or "open_positions.csv updated ✓"})
+            out = result.stdout.strip()
+            if out:
+                for line in out.splitlines():
+                    rlog.ok(line.strip())
+            emit(conn, {"log": out or "DB updated ✓"})
         else:
-            emit(conn, {"log": f"CSV sync warning: {result.stderr.strip()[:120]}"})
+            err = result.stderr.strip()[:200]
+            rlog.error(f"sync_positions failed: {err}")
+            emit(conn, {"log": f"DB sync warning: {err}"})
 
         # ── STEP 3: AI notes in background (non-blocking) ────────────────
+        rlog.phase("AI Notes (background)")
         t = threading.Thread(target=_run_notes_background, daemon=True)
         t.start()
+        rlog.info("AI notes spawned in background thread")
         emit(conn, {"log": "AI notes updating in background..."})
 
-        # Signal done — API will now run the loader
         emit(conn, {"log": "Data ready ✓", "done": True})
 
     except FileNotFoundError:
+        rlog.error(f"claude not found at {CLAUDE}")
         emit(conn, {"error": f"claude not found at {CLAUDE}"})
     except Exception as exc:
+        rlog.error(str(exc))
         emit(conn, {"error": str(exc)})
     finally:
         conn.close()
