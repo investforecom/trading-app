@@ -7,6 +7,7 @@ const nav = [
   { href: '/briefing',  label: 'Daily Briefing', icon: '📋' },
   { href: '/analytics', label: 'Analytics',      icon: '📈' },
   { href: '/weekly',    label: 'Weekly',         icon: '🔍' },
+  { href: '/logs',      label: 'System Logs',    icon: '⚙️' },
 ]
 
 export default function Sidebar() {

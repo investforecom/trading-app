@@ -50,4 +50,8 @@ export const api = {
     latest:  () => get<any>('/insights/latest'),
     history: () => get<any[]>('/insights/history'),
   },
+  system: {
+    logs:         (lines = 200) => get<any>(`/system/logs?lines=${lines}`),
+    bridgeStatus: ()            => get<any>('/system/bridge/status'),
+  },
 }
