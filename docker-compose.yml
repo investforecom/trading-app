@@ -11,10 +11,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init:/docker-entrypoint-initdb.d:ro
-    # During transition: expose on 5433 so dashboard's postgres can stay on 5432.
-    # At cutover: change to 127.0.0.1:5432:5432 and stop the old dashboard stack.
     ports:
-      - "127.0.0.1:5433:5432"
+      - "127.0.0.1:5432:5432"
     networks:
       - internal
     healthcheck:
@@ -34,7 +32,6 @@ services:
       PGUSER: ${POSTGRES_USER}
       PGPASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - /home/char/workspace/dashboard/loader:/loader:ro
       - /home/char/workspace/trading-routine:/trading-routine:ro
       - /tmp/trading-sockets:/tmp/trading-sockets
     networks:
@@ -43,7 +40,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/health || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')\" 2>/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

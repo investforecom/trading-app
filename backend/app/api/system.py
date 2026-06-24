@@ -7,7 +7,6 @@ from app.db import query_one
 
 router = APIRouter()
 
-LOADER_DIR   = "/loader"
 ROUTINE_DIR  = "/trading-routine"
 SOCKET_PATH  = "/tmp/trading-sockets/ibkr-refresh.sock"
 
@@ -66,102 +65,37 @@ async def _stream_refresh():
             yield _event({"error": "IBKR pull failed — check bridge logs"})
             return
 
-        # Bridge updated account_state.json → run loader to sync positions
-        yield _event({"phase": "Loading positions into DB..."})
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "python", "run.py", "--repo", ROUTINE_DIR,
-                cwd=LOADER_DIR,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            async for raw in proc.stdout:
-                line = raw.decode("utf-8", errors="replace").rstrip()
-                if line:
-                    yield _event({"log": line})
-            await proc.wait()
-        except FileNotFoundError:
-            yield _event({"log": "⚠ Loader not mounted — positions not updated"})
-
     else:
-        # Fallback: no bridge — reload whatever files are already on disk
-        yield _event({"log": "⚠ IBKR bridge offline — loading local files only"})
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "python", "run.py", "--repo", ROUTINE_DIR,
-                cwd=LOADER_DIR,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            async for raw in proc.stdout:
-                line = raw.decode("utf-8", errors="replace").rstrip()
-                if line:
-                    yield _event({"log": line})
-            await proc.wait()
-        except FileNotFoundError:
-            yield _event({"error": "Loader not found — volume mounts not ready"})
-            return
+        yield _event({"log": "⚠ IBKR bridge offline — data not refreshed"})
+        return
 
-    # ── Phase 2: force-upsert account snapshot ────────────────────────────────
-    yield _event({"phase": "Syncing account snapshot..."})
-
-    state_path = Path(ROUTINE_DIR) / "account_state.json"
-    if state_path.exists():
-        data = json.loads(state_path.read_text())
-        row = query_one(
-            """
-            INSERT INTO account_snapshots
-                (owner_id, account_id, snapshot_date,
-                 nav, cash, sgov, deployed_pct, eff_leverage, daily_pnl, updated_at)
-            VALUES (1, 1, %(date)s,
-                    %(nav)s, %(cash)s, %(sgov)s, %(deployed_pct)s, %(leverage)s,
-                    %(daily_pnl)s, NOW())
-            ON CONFLICT (account_id, snapshot_date) DO UPDATE SET
-                nav          = EXCLUDED.nav,
-                cash         = EXCLUDED.cash,
-                sgov         = EXCLUDED.sgov,
-                deployed_pct = EXCLUDED.deployed_pct,
-                eff_leverage = EXCLUDED.eff_leverage,
-                daily_pnl    = EXCLUDED.daily_pnl,
-                updated_at   = NOW()
-            RETURNING snapshot_date, nav, daily_pnl, updated_at
-            """,
-            {
-                "date":         data.get("date"),
-                "nav":          data.get("nav"),
-                "cash":         data.get("cash"),
-                "sgov":         data.get("sgov"),
-                "deployed_pct": data.get("deployed_pct"),
-                "leverage":     data.get("leverage"),
-                "daily_pnl":    data.get("daily_pnl"),
-            },
-        )
-        if row:
-            ts = row["updated_at"].strftime("%d %b %H:%M") if row["updated_at"] else "—"
-            yield _event({"log": f"  snapshot {row['snapshot_date']} → NAV ${row['nav']:,.0f} (at {ts})"})
-
-    # ── Phase 2b: load AI interpretations ────────────────────────────────────
+    # ── Phase 2: apply any completed AI notes ────────────────────────────────
+    # sync_positions.py (run inside the bridge) already wrote account + positions
+    # to DB. We just pick up AI notes if the background thread finished them.
     ai_notes_path = Path(ROUTINE_DIR) / "position_ai_notes.json"
     if ai_notes_path.exists():
-        ai_notes = json.loads(ai_notes_path.read_text())
-        updated = 0
-        for symbol, note in ai_notes.items():
-            result = query_one(
-                """
-                UPDATE position_snapshots ps
-                SET ai_note = %(note)s
-                FROM positions p
-                WHERE ps.position_id = p.id
-                  AND p.symbol       = %(symbol)s
-                  AND ps.snapshot_date = (SELECT MAX(snapshot_date) FROM position_snapshots)
-                RETURNING ps.snapshot_date
-                """,
-                {"symbol": symbol, "note": note},
-            )
-            if result:
-                updated += 1
-        if updated:
-            yield _event({"log": f"  AI notes written for {updated} positions ✓"})
+        try:
+            ai_notes = json.loads(ai_notes_path.read_text())
+            updated = 0
+            for symbol, note in ai_notes.items():
+                result = query_one(
+                    """
+                    UPDATE position_snapshots ps
+                    SET ai_note = %(note)s
+                    FROM positions p
+                    WHERE ps.position_id = p.id
+                      AND p.symbol       = %(symbol)s
+                      AND ps.snapshot_date = (SELECT MAX(snapshot_date) FROM position_snapshots)
+                    RETURNING ps.snapshot_date
+                    """,
+                    {"symbol": symbol, "note": note},
+                )
+                if result:
+                    updated += 1
+            if updated:
+                yield _event({"log": f"AI notes applied for {updated} positions ✓"})
+        except Exception:
+            pass
 
     yield _event({"phase": "Done", "done": True})
 

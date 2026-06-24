@@ -157,19 +157,6 @@ def _run_notes_background():
 
 def handle(conn: socket.socket):
     try:
-        # ── git stash + pull ──────────────────────────────────────────────
-        emit(conn, {"log": "Pulling trading-routine repo..."})
-        subprocess.run(
-            ["git", "-C", ROUTINE_DIR, "stash", "--include-untracked"],
-            capture_output=True, timeout=15,
-        )
-        pull = subprocess.run(
-            ["git", "-C", ROUTINE_DIR, "pull", "--rebase", "origin", "main"],
-            capture_output=True, text=True, timeout=30,
-        )
-        if pull.returncode != 0:
-            emit(conn, {"log": f"Git pull warning: {pull.stderr.strip()[:120]}"})
-
         # ── STEP 1: claude -p → account_state.json + ibkr_positions.json ─
         emit(conn, {"log": "Fetching IBKR account data..."})
         ok = _run_claude(PROMPT_STEP1, ALLOWED_TOOLS_STEP1, "10", conn)
