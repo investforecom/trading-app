@@ -100,7 +100,7 @@ def load_discord_webhook():
     p = ROUTINE_DIR / "routine_instructions.md"
     if not p.exists():
         return None
-    m = re.search(r"https://discord\.com/api/webhooks/\S+", p.read_text())
+    m = re.search(r"https://discord\.com/api/webhooks/[\w/\-]+", p.read_text())
     return m.group(0) if m else None
 
 
@@ -500,7 +500,10 @@ def post_discord(webhook_url, message, snap_date, briefing_url=None):
     req = urllib.request.Request(
         webhook_url,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "DiscordBot (trading-system, 1.0)",
+        },
         method="POST",
     )
     try:
