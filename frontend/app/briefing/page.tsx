@@ -185,7 +185,7 @@ export default async function BriefingPage({
             No briefing available yet
           </div>
         ) : (
-          <div className="max-w-2xl">
+          <div className="max-w-3xl">
             {/* Date header */}
             <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
               <span className="text-[10px] text-gray-500">{fmt(briefing.date)}</span>

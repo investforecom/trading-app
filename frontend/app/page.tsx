@@ -9,7 +9,7 @@ export default async function PositionsPage() {
   ])
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto">
+    <div className="space-y-8">
 
       {/* Active Flags */}
       {flags && flags.length > 0 && (

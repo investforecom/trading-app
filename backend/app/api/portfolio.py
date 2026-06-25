@@ -152,12 +152,11 @@ def wheel_stats():
                 END
             ), 0), 0)                       AS assignment_risk,
 
-            -- NAV improvement if all short options expire OTM worthless
-            -- (current_value is what you avoid paying at close; it flows back into NAV)
+            -- Original credit received from open short options (what stays if they expire OTM)
             ROUND(COALESCE(SUM(
                 CASE WHEN p.strategy IN ('WheelSP', 'WheelSC')
                           AND p.symbol NOT LIKE '%%STK%%' THEN
-                    ps.current_value::numeric
+                    ps.cost_basis::numeric
                 END
             ), 0), 0)                       AS otm_premium
 

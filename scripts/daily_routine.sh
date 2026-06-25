@@ -49,25 +49,32 @@ else
     exit 1
 fi
 
-# ── Step 2: Daily briefing ────────────────────────────────────────────────────
+# ── Step 2: Daily briefing (script — no LLM tokens) ──────────────────────────
+# generate_briefing.py reads account_state.json + ibkr_positions.json (already
+# written by Step 1) + DB position_snapshots, builds the full briefing markdown,
+# and posts to Discord.  Zero LLM cost — completely deterministic.
 rlog "PHASE  " "── Briefing"
-cd "$ROUTINE_DIR"
-if "$CLAUDE" -p \
-    "Read routine_instructions.md and follow it EXACTLY for this run.
-The instruction file is the single source of truth — do not improvise
-a different format, and do not use any older version of these instructions
-from memory. Use the Discord webhook specified inside that file." \
-    --allowedTools "Bash,Read,Write,Edit,WebSearch,WebFetch,\
-mcp__claude_ai_Interactive_Brokers_IBKR__get_account_balances,\
-mcp__claude_ai_Interactive_Brokers_IBKR__get_account_positions,\
-mcp__claude_ai_Interactive_Brokers_IBKR__get_account_summary,\
-mcp__claude_ai_Interactive_Brokers_IBKR__get_account_orders,\
-mcp__claude_ai_Interactive_Brokers_IBKR__get_account_trades" \
-    --model claude-sonnet-4-6 \
-    2>&1; then
+if python3 "$SCRIPTS_DIR/generate_briefing.py" 2>&1; then
     rlog "OK     " "Briefing generated ✓"
 else
     rlog "WARN   " "Briefing generation failed (non-fatal — routine continues)"
+fi
+
+# ── Step 2b: Load briefing into DB ───────────────────────────────────────────
+# Uses the trading date from account_state.json (IBKR business date, not wall-clock date)
+rlog "PHASE  " "── Briefing → DB"
+BRIEFING_DATE=$(python3 -c "
+import json, pathlib
+p = pathlib.Path('$ROUTINE_DIR/account_state.json')
+print(json.loads(p.read_text()).get('date','')) if p.exists() else print('')
+" 2>/dev/null)
+if [ -z "$BRIEFING_DATE" ]; then
+    BRIEFING_DATE=$(date -u +%Y-%m-%d)
+fi
+if python3 "$SCRIPTS_DIR/load_briefing.py" "$BRIEFING_DATE" 2>&1; then
+    rlog "OK     " "Briefing $BRIEFING_DATE → DB ✓"
+else
+    rlog "WARN   " "load_briefing.py failed for $BRIEFING_DATE (non-fatal)"
 fi
 
 # ── Step 3: Git backup push (no pull — DB is source of truth) ────────────────

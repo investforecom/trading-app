@@ -20,7 +20,7 @@ export default async function AnalyticsPage() {
   const total1y   = byStrategy?.reduce((s: number, r: any) => s + (r.one_year ?? 0), 0)
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto">
+    <div className="space-y-8">
       <div>
         <h1 className="text-xl font-semibold text-gray-100">Analytics</h1>
         <p className="text-sm text-gray-500 mt-0.5">Strategy performance · Realized P&amp;L</p>

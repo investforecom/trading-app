@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
@@ -321,65 +322,158 @@ def auto_create_missing_options(
     owner_id: int = 1,
 ) -> int:
     """
-    Create position + snapshot rows for short options in IBKR with no DB entry.
+    Create position + snapshot rows for IBKR options with no DB entry.
 
-    Only processes single-leg short options (negative IBKR position).
-    Strategy is inferred: short PUT → WheelSP, short CALL → WheelSC.
-    cost_basis = average_price × |qty| × 100 (premium received).
-
-    Returns the number of new positions created.
+    Pass 1 — Pair detection: groups unmatched options by (und, mon3, day2, year2).
+      Long lower-strike CALL + short higher-strike CALL → LDS (call debit spread)
+      Short higher-strike PUT  + long lower-strike PUT  → LDS (put debit spread)
+    Pass 2 — Standalone shorts: remaining unmatched short options → WheelSP / WheelSC.
+    Unpaired long options are skipped (may be LEAPS already in DB or already closed legs).
     """
-    created = 0
+    def _fmt(strike: str) -> str:
+        try:
+            f = float(strike)
+            return str(int(f)) if f == int(f) else strike
+        except ValueError:
+            return strike
 
+    # ── Collect all unmatched options (long + short) ─────────────────────────
+    unmatched: list[dict] = []
     for p in positions_raw:
         if p["asset_class"] != "OPT":
             continue
-
-        ibkr_qty = int(float(p.get("position", 0) or 0))
-        if ibkr_qty >= 0:
-            continue  # only auto-create short options
-
         desc = p["contract_description"]
         m = OPT_RE.match(desc)
         if not m:
             continue
-
-        und    = m.group(1).upper()
-        mon3   = m.group(2).upper()
-        day2   = m.group(3)
-        year2  = m.group(4)
-        strike = m.group(5)
-        cp     = m.group(6)
-
+        und, mon3, day2, year2, strike, cp = (
+            m.group(1).upper(), m.group(2).upper(), m.group(3),
+            m.group(4), m.group(5), m.group(6),
+        )
         key_yr  = (und, year2, strike, cp)
         key_day = (und, mon3, day2, strike, cp)
-
-        # Skip if already matched to an existing DB position
         if key_yr in consumed or key_day in consumed:
             continue
+        unmatched.append({
+            "und": und, "mon3": mon3, "day2": day2, "year2": year2,
+            "strike": strike, "cp": cp,
+            "key_yr": key_yr, "key_day": key_day,
+            "ibkr_qty":  int(float(p.get("position",      0) or 0)),
+            "avg_price": float(p.get("average_price",  0) or 0),
+            "mv":        float(p["market_value"]),
+        })
 
-        # Mark consumed so we don't double-process
-        consumed.add(key_yr)
-        consumed.add(key_day)
+    # ── Pass 1: detect spread pairs ───────────────────────────────────────────
+    groups: dict = defaultdict(list)
+    for opt in unmatched:
+        groups[(opt["und"], opt["mon3"], opt["day2"], opt["year2"])].append(opt)
 
-        cp_char  = "C" if cp == "CALL" else "P"
-        symbol   = f"{und}_{mon3}{day2}_{strike}{cp_char}"
-        strategy = "WheelSP" if cp == "PUT" else "WheelSC"
+    pair_consumed: set   = set()
+    to_create:     list  = []
 
-        avg_price = float(p.get("average_price", 0) or 0)
-        mv        = float(p["market_value"])
-        abs_qty   = abs(ibkr_qty)
+    for (und, mon3, day2, year2), group in groups.items():
+        calls = [o for o in group if o["cp"] == "CALL"]
+        puts  = [o for o in group if o["cp"] == "PUT"]
 
-        if avg_price > 0:
-            cost_basis = round(avg_price * abs_qty * 100, 2)
-        else:
-            cost_basis = round(abs(mv), 2)
+        long_calls  = sorted([o for o in calls if o["ibkr_qty"] > 0], key=lambda x: float(x["strike"]))
+        short_calls = sorted([o for o in calls if o["ibkr_qty"] < 0], key=lambda x: float(x["strike"]))
+        long_puts   = sorted([o for o in puts  if o["ibkr_qty"] > 0], key=lambda x: float(x["strike"]))
+        short_puts  = sorted([o for o in puts  if o["ibkr_qty"] < 0], key=lambda x: float(x["strike"]))
 
+        paired_lc: set = set()
+        paired_sc: set = set()
+        for lc in long_calls:
+            if lc["key_yr"] in paired_lc:
+                continue
+            for sc in short_calls:
+                if sc["key_yr"] in paired_sc:
+                    continue
+                if float(lc["strike"]) < float(sc["strike"]):
+                    abs_qty   = min(abs(lc["ibkr_qty"]), abs(sc["ibkr_qty"]))
+                    net_debit = (lc["avg_price"] - sc["avg_price"]) * abs_qty * 100
+                    net_mv    = lc["mv"] + sc["mv"]
+                    lo, hi    = sorted([lc["strike"], sc["strike"]], key=float)
+                    symbol    = f"{und}_{mon3}{year2}_{_fmt(lo)}C{_fmt(hi)}C"
+                    cost      = round(net_debit, 2) if net_debit > 0 else round(abs(net_mv), 2)
+                    to_create.append({
+                        "symbol": symbol, "underlying": und, "strategy": "LDS",
+                        "abs_qty": abs_qty, "cost_basis": cost, "current_value": round(net_mv, 2),
+                        "is_short": False,
+                    })
+                    pair_consumed.update({lc["key_yr"], sc["key_yr"]})
+                    paired_lc.add(lc["key_yr"])
+                    paired_sc.add(sc["key_yr"])
+                    break
+
+        paired_lp: set = set()
+        paired_sp: set = set()
+        for sp in short_puts:
+            if sp["key_yr"] in paired_sp:
+                continue
+            for lp in long_puts:
+                if lp["key_yr"] in paired_lp:
+                    continue
+                if float(sp["strike"]) > float(lp["strike"]):
+                    abs_qty   = min(abs(sp["ibkr_qty"]), abs(lp["ibkr_qty"]))
+                    net_debit = (lp["avg_price"] - sp["avg_price"]) * abs_qty * 100
+                    net_mv    = sp["mv"] + lp["mv"]
+                    lo, hi    = sorted([sp["strike"], lp["strike"]], key=float)
+                    symbol    = f"{und}_{mon3}{year2}_{_fmt(lo)}P{_fmt(hi)}P"
+                    cost      = round(abs(net_debit), 2) if net_debit != 0 else round(abs(net_mv), 2)
+                    to_create.append({
+                        "symbol": symbol, "underlying": und, "strategy": "LDS",
+                        "abs_qty": abs_qty, "cost_basis": cost, "current_value": round(net_mv, 2),
+                        "is_short": False,
+                    })
+                    pair_consumed.update({sp["key_yr"], lp["key_yr"]})
+                    paired_sp.add(sp["key_yr"])
+                    paired_lp.add(lp["key_yr"])
+                    break
+
+    # ── Pass 2: standalone short options not paired into spreads ──────────────
+    for opt in unmatched:
+        if opt["key_yr"] in pair_consumed:
+            continue
+        if opt["ibkr_qty"] >= 0:
+            continue  # skip unpaired long options
+        consumed.add(opt["key_yr"])
+        consumed.add(opt["key_day"])
+        cp_char  = "C" if opt["cp"] == "CALL" else "P"
+        symbol   = f"{opt['und']}_{opt['mon3']}{opt['day2']}_{_fmt(opt['strike'])}{cp_char}"
+        strategy = "WheelSP" if opt["cp"] == "PUT" else "WheelSC"
+        abs_qty  = abs(opt["ibkr_qty"])
+        avg      = opt["avg_price"]
+        mv       = opt["mv"]
+        cost_basis    = round(avg * abs_qty * 100, 2) if avg > 0 else round(abs(mv), 2)
         current_value = round(abs(mv), 2)
-        gain_pct = round((cost_basis - current_value) / cost_basis * 100, 4) if cost_basis else 0
-        pct_nav  = round(current_value / nav * 100, 4) if nav else 0
+        to_create.append({
+            "symbol": symbol, "underlying": opt["und"], "strategy": strategy,
+            "abs_qty": abs_qty, "cost_basis": cost_basis, "current_value": current_value,
+            "is_short": True,
+        })
 
-        # Upsert position row (may already exist if closed and reopened)
+    # ── Insert all new positions ───────────────────────────────────────────────
+    created = 0
+    for item in to_create:
+        symbol        = item["symbol"]
+        underlying    = item["underlying"]
+        strategy      = item["strategy"]
+        abs_qty       = item["abs_qty"]
+        cost_basis    = item["cost_basis"]
+        current_value = item["current_value"]
+        is_short      = item["is_short"]
+
+        db_qty = -abs_qty if is_short else abs_qty
+        if cost_basis:
+            gain_pct = round(
+                (cost_basis - current_value) / cost_basis * 100 if is_short
+                else (current_value - cost_basis) / cost_basis * 100,
+                4,
+            )
+        else:
+            gain_pct = 0
+        pct_nav = round(abs(current_value) / nav * 100, 4) if nav else 0
+
         cur.execute("""
             INSERT INTO positions
                 (owner_id, account_id, symbol, underlying, strategy,
@@ -387,12 +481,11 @@ def auto_create_missing_options(
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'ibkr-auto')
             ON CONFLICT (account_id, symbol) WHERE closed_date IS NULL DO NOTHING
             RETURNING id
-        """, (owner_id, account_id, symbol, und, strategy,
+        """, (owner_id, account_id, symbol, underlying, strategy,
               today, abs_qty, cost_basis))
         row = cur.fetchone()
 
         if row is None:
-            # Position already existed (ON CONFLICT DO NOTHING)
             cur.execute("""
                 SELECT id FROM positions
                 WHERE account_id = %s AND symbol = %s AND closed_date IS NULL
@@ -402,7 +495,6 @@ def auto_create_missing_options(
                 continue
 
         position_id = row["id"]
-
         cur.execute("""
             INSERT INTO position_snapshots
                 (position_id, owner_id, snapshot_date,
@@ -414,7 +506,7 @@ def auto_create_missing_options(
                 pct_nav       = EXCLUDED.pct_nav,
                 qty           = EXCLUDED.qty
         """, (position_id, owner_id, today,
-              -abs_qty, cost_basis, current_value, gain_pct, pct_nav))
+              db_qty, cost_basis, abs(current_value), gain_pct, pct_nav))
 
         msg = f"auto-created: {symbol} | strategy={strategy} | qty={abs_qty} | cost_basis=${cost_basis:.2f}"
         print(f"  {msg}")
