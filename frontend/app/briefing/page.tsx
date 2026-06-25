@@ -146,69 +146,57 @@ export default async function BriefingPage({
     ])
   } catch { /* DB not ready */ }
 
+  const activeDate = briefing?.date ?? history[0]?.date
+
   return (
-    <div className="flex gap-4 h-full overflow-hidden">
+    <div className="space-y-4">
 
-      {/* Date list sidebar */}
-      <aside className="w-36 flex-shrink-0 overflow-y-auto border-r border-border pr-3">
-        <p className="text-[9px] font-medium text-gray-600 uppercase tracking-widest mb-2 pt-1">History</p>
-        {history.length === 0 && (
-          <p className="text-[10px] text-gray-700">No briefings</p>
-        )}
-        {history.map((b: any) => {
-          const isActive = b.date === (briefing?.date ?? history[0]?.date)
-          return (
-            <a
-              key={b.date}
-              href={`/briefing?date=${b.date}`}
-              className={`block text-[11px] py-1 px-2 rounded mb-0.5 leading-tight transition-colors ${
-                isActive
-                  ? 'bg-blue-600/20 text-blue-400'
-                  : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
-              }`}
-            >
-              <span className="font-mono">{b.date}</span>
-              {b.nav && (
-                <span className="block text-[9px] text-gray-700">
-                  ${Number(b.nav).toLocaleString('en-AU', { maximumFractionDigits: 0 })}
-                </span>
-              )}
-            </a>
-          )
-        })}
-      </aside>
+      {/* Top bar: date header + history nav — same full-width treatment as all sections */}
+      <div className="flex items-center justify-between pb-3 border-b border-border">
+        <div className="flex items-center gap-3 text-[10px] text-gray-600">
+          {briefing && (
+            <span className="text-gray-400">{fmt(briefing.date)}</span>
+          )}
+          {briefing?.nav && (
+            <span>NAV <span className="text-gray-300 tabular-nums font-mono">${Number(briefing.nav).toLocaleString('en-AU', { maximumFractionDigits: 0 })}</span></span>
+          )}
+          {briefing?.eff_lev && (
+            <span>Eff Lev <span className={`tabular-nums font-mono ${Number(briefing.eff_lev) >= 1 ? 'text-red-400' : 'text-gray-300'}`}>{briefing.eff_lev}x</span></span>
+          )}
+        </div>
 
-      {/* Briefing content */}
-      <main className="flex-1 overflow-y-auto">
-        {!briefing ? (
-          <div className="flex items-center justify-center h-full text-gray-600 text-xs">
-            No briefing available yet
-          </div>
-        ) : (
-          <div>
-            {/* Date header */}
-            <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
-              <span className="text-[10px] text-gray-500">{fmt(briefing.date)}</span>
-              <div className="flex items-center gap-3 text-[10px] text-gray-600">
-                {briefing.nav && (
-                  <span>NAV <span className="text-gray-400 tabular-nums">${Number(briefing.nav).toLocaleString('en-AU', { maximumFractionDigits: 0 })}</span></span>
-                )}
-                {briefing.eff_lev && (
-                  <span>Eff Lev <span className={`tabular-nums ${Number(briefing.eff_lev) >= 1 ? 'text-red-400' : 'text-gray-400'}`}>{briefing.eff_lev}x</span></span>
-                )}
-              </div>
-            </div>
+        {/* History: compact inline date pills */}
+        <div className="flex items-center gap-1 flex-wrap justify-end">
+          {history.map((b: any) => {
+            const isActive = b.date === activeDate
+            return (
+              <a
+                key={b.date}
+                href={`/briefing?date=${b.date}`}
+                className={`text-[10px] px-2 py-0.5 rounded font-mono transition-colors ${
+                  isActive
+                    ? 'bg-blue-600/20 text-blue-400'
+                    : 'text-gray-600 hover:text-gray-300 hover:bg-white/5'
+                }`}
+              >
+                {b.date}
+              </a>
+            )
+          })}
+        </div>
+      </div>
 
-            {/* Markdown body */}
-            <article className="text-sm leading-relaxed">
-              {briefing.briefing_md
-                ? <BriefingMd md={briefing.briefing_md} />
-                : <p className="text-gray-600 text-xs">No content.</p>
-              }
-            </article>
-          </div>
-        )}
-      </main>
+      {/* Briefing content — full width, same as every other section */}
+      {!briefing ? (
+        <div className="text-gray-600 text-xs py-8 text-center">No briefing available yet</div>
+      ) : (
+        <article className="text-sm leading-relaxed">
+          {briefing.briefing_md
+            ? <BriefingMd md={briefing.briefing_md} />
+            : <p className="text-gray-600 text-xs">No content.</p>
+          }
+        </article>
+      )}
 
     </div>
   )
