@@ -48,7 +48,7 @@ function BriefingMd({ md }: { md: string }) {
     if (line.startsWith('# ')) {
       if (inList) { inList = false }
       nodes.push(
-        <h1 key={i} className="text-base font-bold text-gray-100 mb-1 font-mono">
+        <h1 key={i} className="text-lg font-bold text-gray-100 mb-1 font-mono">
           {renderInline(line.slice(2))}
         </h1>
       )
@@ -58,7 +58,7 @@ function BriefingMd({ md }: { md: string }) {
     if (line.startsWith('## ')) {
       if (inList) { inList = false }
       nodes.push(
-        <h2 key={i} className="text-[11px] font-semibold text-gray-500 uppercase tracking-widest mt-5 mb-2 border-b border-border pb-1">
+        <h2 key={i} className="text-xs font-semibold text-gray-500 uppercase tracking-widest mt-5 mb-2 border-b border-border pb-1">
           {line.slice(3)}
         </h2>
       )
@@ -74,7 +74,7 @@ function BriefingMd({ md }: { md: string }) {
     if (line.startsWith('> ')) {
       if (inList) { inList = false }
       nodes.push(
-        <blockquote key={i} className="border-l-2 border-amber-500/40 pl-3 py-0.5 my-1.5 text-[11px] text-amber-400/70 leading-snug">
+        <blockquote key={i} className="border-l-2 border-amber-500/40 pl-3 py-0.5 my-1.5 text-sm text-amber-400/70 leading-snug">
           {renderInline(line.slice(2))}
         </blockquote>
       )
@@ -84,7 +84,7 @@ function BriefingMd({ md }: { md: string }) {
     if (line.match(/^[-*]\s/)) {
       if (!inList) { inList = true }
       nodes.push(
-        <li key={i} className="text-xs text-gray-300 ml-4 my-0.5 leading-snug list-disc">
+        <li key={i} className="text-sm text-gray-300 ml-4 my-0.5 leading-snug list-disc">
           {renderInline(line.slice(2))}
         </li>
       )
@@ -94,7 +94,7 @@ function BriefingMd({ md }: { md: string }) {
     if (line.match(/^\d+\.\s/)) {
       if (!inList) { inList = true }
       nodes.push(
-        <li key={i} className="text-xs text-gray-300 ml-4 my-0.5 leading-snug list-decimal">
+        <li key={i} className="text-sm text-gray-300 ml-4 my-0.5 leading-snug list-decimal">
           {renderInline(line.replace(/^\d+\.\s+/, ''))}
         </li>
       )
@@ -110,7 +110,7 @@ function BriefingMd({ md }: { md: string }) {
     // Regular paragraph — includes **Header:** and **Wheel cover:** lines
     if (inList) inList = false
     nodes.push(
-      <p key={i} className="text-xs text-gray-300 my-0.5 leading-snug">
+      <p key={i} className="text-sm text-gray-300 my-0.5 leading-snug">
         {renderInline(line)}
       </p>
     )
@@ -185,7 +185,7 @@ export default async function BriefingPage({
             No briefing available yet
           </div>
         ) : (
-          <div className="max-w-3xl">
+          <div>
             {/* Date header */}
             <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
               <span className="text-[10px] text-gray-500">{fmt(briefing.date)}</span>

@@ -477,11 +477,11 @@ def section_decisions(positions, suppressed, stock_prices, snap_date):
 
 # ── Discord ───────────────────────────────────────────────────────────────────
 
-def post_discord(webhook_url, message, snap_date, briefing_url=None):
+def post_discord(webhook_url, message):
     import urllib.request
 
     if len(message) > 1800:
-        # Truncate to header + decisions + link
+        # Truncate to header + decisions
         lines = message.split("\n")
         short = []
         in_decisions = False
@@ -490,11 +490,9 @@ def post_discord(webhook_url, message, snap_date, briefing_url=None):
                 in_decisions = True
             if in_decisions or len(short) < 6:
                 short.append(line)
-            if len("\n".join(short)) > 1600:
+            if len("\n".join(short)) > 1800:
                 break
         message = "\n".join(short)
-        if briefing_url:
-            message += f"\n{briefing_url}"
 
     payload = json.dumps({"content": message}).encode()
     req = urllib.request.Request(
@@ -580,7 +578,6 @@ def generate(briefing_date=None):
 
     # Discord
     if discord_url:
-        briefing_url = f"https://github.com/investforecom/trading-routine/blob/main/briefing_log/{snap_date}.md"
         d = datetime.strptime(snap_date, "%Y-%m-%d")
         deployed_pct = state.get("deployed_pct", 0)
         eff_lev = state.get("leverage", 0)
@@ -598,10 +595,9 @@ def generate(briefing_date=None):
         msg_lines.append("")
         msg_lines.append("**TODAY'S DECISIONS**")
         msg_lines.append(decisions)
-        msg_lines.append(briefing_url)
 
         msg = "\n".join(msg_lines)
-        ok = post_discord(discord_url, msg, snap_date, briefing_url)
+        ok = post_discord(discord_url, msg)
         print(f"{'OK' if ok else 'WARN'} Discord {'sent' if ok else 'failed'}")
     else:
         print("WARN Discord webhook not found — skipped")
