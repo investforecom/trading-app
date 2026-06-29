@@ -606,7 +606,7 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
     return (
       <th
         onClick={() => toggleSort(col)}
-        className={`px-4 py-3 ${align} cursor-pointer select-none hover:text-gray-300 transition-colors whitespace-nowrap`}
+        className={`px-4 py-2 ${align} cursor-pointer select-none hover:text-gray-300 transition-colors whitespace-nowrap`}
       >
         {label}<SortIcon dir={sortKey === col ? sortDir : null} />
       </th>
@@ -653,7 +653,7 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
       )}
 
       {/* Filter bar — single line */}
-      <div className="px-4 py-2.5 border-b border-border flex items-center gap-2 flex-wrap">
+      <div className="px-4 py-2.5 border-b border-border flex items-center gap-2 flex-wrap flex-shrink-0">
         <MultiSelect
           label="Strategy"
           options={allStrategies}
@@ -688,7 +688,7 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
       </div>
 
       {/* Mobile card list — shown on small screens */}
-      <div className="md:hidden">
+      <div className="md:hidden flex-1 overflow-y-auto">
         {rows.map((p: any, i: number) => <PositionCard key={i} p={p} onEdit={() => openNote(p)} />)}
         {rows.length === 0 && (
           <div className="px-4 py-8 text-center text-gray-600 text-xs">No positions match</div>
@@ -716,9 +716,10 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
       </div>
 
       {/* Desktop table — hidden on small screens */}
-      <div className="hidden md:block overflow-x-auto">
+      <div className="hidden md:flex flex-col flex-1 min-h-0">
+        <div className="flex-1 overflow-auto min-h-0">
         <table className="w-full text-sm">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-card">
             <tr className="border-b border-border text-xs text-gray-500 uppercase tracking-wider">
               <Th label="Symbol"     col="symbol" />
               <Th label="Underlying" col="underlying" />
@@ -728,10 +729,10 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
               <Th label="Cost"       col="cost"      align="text-right" />
               <Th label="Avg"        col="avg_price" align="text-right" />
               <Th label="Value"      col="value"     align="text-right" />
-              <Th label="Gain%"      col="gain_pct"  align="text-right" />
+              <Th label="Unr. P&L"   col="gain_pct"  align="text-right" />
               <Th label="Day Δ"      col="daily_pp"  align="text-right" />
               <Th label="%NAV"       col="pct_nav"   align="text-right" />
-              <th className="px-4 py-3 text-center text-xs text-gray-500 uppercase tracking-wider">Flag</th>
+              <th className="px-4 py-2 text-center text-xs text-gray-500 uppercase tracking-wider">Flag</th>
             </tr>
           </thead>
 
@@ -756,7 +757,7 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
 
               return (
                 <tr key={i} className="group hover:bg-white/3 transition-colors">
-                  <td className="px-4 py-2.5">
+                  <td className="px-4 py-1">
                     <div className="flex flex-col gap-0.5 w-[220px] min-w-0">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="font-mono font-medium text-gray-200 leading-tight truncate flex-1 min-w-0">
@@ -781,20 +782,24 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-2.5 font-mono text-gray-300 text-xs whitespace-nowrap">{p.underlying}</td>
-                  <td className="px-4 py-2.5 text-gray-400 text-xs whitespace-nowrap">{p.theme ?? '—'}</td>
-                  <td className="px-4 py-2.5 whitespace-nowrap">
+                  <td className="px-4 py-1 font-mono text-gray-300 text-xs whitespace-nowrap">{p.underlying}</td>
+                  <td className="px-4 py-1 text-gray-400 text-xs whitespace-nowrap">{p.theme ?? '—'}</td>
+                  <td className="px-4 py-1 whitespace-nowrap">
                     <Badge value={p.strategy} />
                   </td>
-                  <td className="px-4 py-2.5 text-right text-gray-300 whitespace-nowrap tabular-nums">{p.qty}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-300 whitespace-nowrap tabular-nums">${Number(p.cost).toLocaleString()}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-400 whitespace-nowrap tabular-nums">{fmtAvg(p.avg_price)}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-300 whitespace-nowrap tabular-nums">${Number(p.value).toLocaleString()}</td>
-                  <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap tabular-nums ${gainColor(p.gain_pct)}`}>
-                    {p.gain_pct > 0 ? '+' : ''}{p.gain_pct}%
+                  <td className="px-4 py-1 text-right text-gray-300 whitespace-nowrap tabular-nums">{p.qty}</td>
+                  <td className="px-4 py-1 text-right text-gray-300 whitespace-nowrap tabular-nums">${Number(p.cost).toLocaleString()}</td>
+                  <td className="px-4 py-1 text-right text-gray-400 whitespace-nowrap tabular-nums">{fmtAvg(p.avg_price)}</td>
+                  <td className="px-4 py-1 text-right text-gray-300 whitespace-nowrap tabular-nums">${Number(p.value).toLocaleString()}</td>
+                  <td className={`px-4 py-1 text-right font-medium whitespace-nowrap tabular-nums ${gainColor(p.gain_pct)}`}>
+                    {(() => {
+                      const abs = Math.round(Number(p.value) - Number(p.cost))
+                      const sign = abs < 0 ? '-' : ''
+                      return `${sign}$${Math.abs(abs).toLocaleString()} (${p.gain_pct}%)`
+                    })()}
                   </td>
                   {/* Day Δ — daily movement with weekly sub-line */}
-                  <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                  <td className="px-4 py-1 text-right whitespace-nowrap">
                     {dailyPP != null ? (
                       <div className="flex flex-col items-end gap-px">
                         <span className={`text-xs tabular-nums ${deltaColor(dailyPP)}`}>
@@ -811,8 +816,8 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
                       <span className="text-gray-700 text-xs">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-right text-gray-400 whitespace-nowrap tabular-nums">{p.pct_nav}%</td>
-                  <td className="px-4 py-2.5 text-center">
+                  <td className="px-4 py-1 text-right text-gray-400 whitespace-nowrap tabular-nums">{p.pct_nav}%</td>
+                  <td className="px-4 py-1 text-center">
                     <FlagCell
                       flags={p.flags}
                       inlineFlag={inlineFlag}
@@ -837,28 +842,29 @@ export default function PositionsTable({ positions }: { positions: any[] }) {
           <tfoot>
             <tr className="border-t-2 border-border/60 bg-white/[0.015]">
               {/* colSpan=5 covers: Symbol | Underlying | Theme | Strategy | Qty */}
-              <td className="px-4 py-2.5 text-xs text-gray-500 font-medium" colSpan={5}>
+              <td className="px-4 py-1 text-xs text-gray-500 font-medium" colSpan={5}>
                 Total
                 <span className="text-gray-600 font-normal ml-1">
                   ({rows.length}{hasFilters ? ` of ${(positions ?? []).length}` : ''})
                 </span>
               </td>
-              <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-xs font-semibold">
+              <td className="px-4 py-1 text-right text-gray-300 tabular-nums text-xs font-semibold">
                 ${totals.cost.toLocaleString()}
               </td>
               <td /> {/* Avg */}
-              <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-xs font-semibold">
+              <td className="px-4 py-1 text-right text-gray-300 tabular-nums text-xs font-semibold">
                 ${totals.value.toLocaleString()}
               </td>
               <td /> {/* Gain% */}
               <td /> {/* Day Δ */}
-              <td className="px-4 py-2.5 text-right text-gray-400 tabular-nums text-xs font-semibold">
+              <td className="px-4 py-1 text-right text-gray-400 tabular-nums text-xs font-semibold">
                 {totals.pctNav.toFixed(1)}%
               </td>
               <td /> {/* Flag */}
             </tr>
           </tfoot>
         </table>
+        </div>
       </div>
     </>
   )

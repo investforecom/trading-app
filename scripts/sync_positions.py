@@ -81,7 +81,7 @@ def index_ibkr_positions(positions: list[dict]) -> tuple[dict, dict, dict]:
 
     for p in positions:
         desc    = p["contract_description"]
-        asset   = p["asset_class"]
+        asset   = p.get("asset_class") or ("OPT" if any(w in desc for w in ("CALL", "PUT")) else "STK")
         mv      = float(p["market_value"])
         ibkr_qty = int(float(p.get("position", 0) or 0))
 
@@ -340,7 +340,9 @@ def auto_create_missing_options(
     # ── Collect all unmatched options (long + short) ─────────────────────────
     unmatched: list[dict] = []
     for p in positions_raw:
-        if p["asset_class"] != "OPT":
+        desc_ac = p["contract_description"]
+        asset_ac = p.get("asset_class") or ("OPT" if any(w in desc_ac for w in ("CALL", "PUT")) else "STK")
+        if asset_ac != "OPT":
             continue
         desc = p["contract_description"]
         m = OPT_RE.match(desc)

@@ -90,6 +90,60 @@ def positions():
     """)
 
 
+@router.get("/themes")
+def themes():
+    return query("""
+        WITH today AS (SELECT MAX(snapshot_date) AS d FROM position_snapshots),
+        legs AS (
+            SELECT
+                CASE
+                    WHEN p.strategy::text IN ('WheelSP', 'WheelSC') THEN 'Wheel'
+                    ELSE COALESCE(p.theme::text, 'Untagged')
+                END                                              AS theme,
+                p.underlying,
+                p.strategy::text                                 AS strategy,
+                ROUND(ps.cost_basis::numeric,    0)              AS cost,
+                ROUND(ps.current_value::numeric, 0)              AS value,
+                ROUND(ps.gain_pct::numeric,      1)              AS gain_pct,
+                ROUND(ps.pct_nav::numeric,       2)              AS pct_nav
+            FROM position_snapshots ps
+            JOIN positions p ON p.id = ps.position_id
+            WHERE ps.snapshot_date = (SELECT d FROM today)
+              AND p.closed_date IS NULL
+        )
+        SELECT
+            theme,
+            COUNT(DISTINCT underlying)                          AS tickers,
+            COUNT(*)                                            AS legs,
+            ROUND(SUM(cost),  0)                               AS cost,
+            ROUND(SUM(value), 0)                               AS value,
+            ROUND(SUM(value - cost), 0)                        AS pnl,
+            ROUND(100.0 * SUM(value - cost) / NULLIF(SUM(cost), 0), 1) AS gain_pct,
+            ROUND(SUM(pct_nav), 1)                             AS pct_nav,
+            json_agg(
+                json_build_object(
+                    'underlying', underlying,
+                    'strategy',   strategy,
+                    'cost',       cost,
+                    'value',      value,
+                    'gain_pct',   gain_pct,
+                    'pct_nav',    pct_nav
+                )
+                ORDER BY cost DESC NULLS LAST
+            ) AS positions
+        FROM legs
+        GROUP BY theme
+        ORDER BY
+            CASE theme
+                WHEN 'Wheel'    THEN 2
+                WHEN 'Cash'     THEN 3
+                WHEN 'Untagged' THEN 4
+                ELSE 1
+            END,
+            SUM(cost) DESC NULLS LAST
+    """)
+
+
 @router.get("/flags")
 def flags():
     return query("""

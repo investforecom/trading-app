@@ -6,6 +6,7 @@ const nav = [
   { href: '/',          label: 'Positions',      icon: '📊' },
   { href: '/briefing',  label: 'Daily Briefing', icon: '📋' },
   { href: '/analytics', label: 'Analytics',      icon: '📈' },
+  { href: '/themes',    label: 'Themes',         icon: '🗂️' },
   { href: '/logs',      label: 'System Logs',    icon: '⚙️' },
 ]
 

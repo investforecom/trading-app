@@ -26,6 +26,8 @@ import sys
 import threading
 from pathlib import Path
 
+_refresh_lock = threading.Lock()
+
 sys.path.insert(0, os.path.dirname(__file__))
 import routine_log as rlog
 
@@ -160,6 +162,11 @@ def _run_notes_background():
 
 
 def handle(conn: socket.socket):
+    if not _refresh_lock.acquire(blocking=False):
+        rlog.warn("Refresh already in progress — rejecting duplicate connection")
+        emit(conn, {"error": "Refresh already in progress, please wait"})
+        conn.close()
+        return
     try:
         # ── STEP 1: claude -p → account_state.json + ibkr_positions.json ─
         rlog.phase("IBKR Fetch")
@@ -188,9 +195,6 @@ def handle(conn: socket.socket):
         )
         if result.returncode == 0:
             out = result.stdout.strip()
-            if out:
-                for line in out.splitlines():
-                    rlog.ok(line.strip())
             emit(conn, {"log": out or "DB updated ✓"})
         else:
             err = result.stderr.strip()[:200]
@@ -213,6 +217,7 @@ def handle(conn: socket.socket):
         rlog.error(str(exc))
         emit(conn, {"error": str(exc)})
     finally:
+        _refresh_lock.release()
         conn.close()
 
 

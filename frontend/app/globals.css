@@ -10,7 +10,17 @@ body {
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Scrollbar */
+/* Scrollbar — default thin dark style for nested scrollers (tables, log viewer, etc.) */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: #1a1f2e; }
 ::-webkit-scrollbar-thumb { background: #2a3044; border-radius: 3px; }
+
+/*
+  Hide the main-scroll scrollbar so <main> is always exactly the same width
+  regardless of whether the page content overflows.  The StatusBar sits above
+  <main> in the flex column and spans the same column width, so hiding the
+  scrollbar makes both permanently identical — Sydney Time never shifts.
+  Scrolling still works via mouse-wheel / keyboard / trackpad.
+*/
+.main-scroll { scrollbar-width: none; }
+.main-scroll::-webkit-scrollbar { display: none; }

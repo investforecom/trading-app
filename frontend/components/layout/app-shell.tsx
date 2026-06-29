@@ -17,7 +17,7 @@ export default function AppShell({ sidebar, statusBar, children }: AppShellProps
   }, [])
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden w-full">
 
       {/* Sidebar — overflow-hidden clips content as width collapses */}
       <div className={`flex-shrink-0 overflow-hidden transition-[width] duration-200 ${open ? 'w-52' : 'w-0'}`}>
@@ -48,7 +48,12 @@ export default function AppShell({ sidebar, statusBar, children }: AppShellProps
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {statusBar}
-        <main className="flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6 bg-surface [scrollbar-gutter:stable]">
+        {/*
+          main-scroll: overflow-y-auto but scrollbar is hidden via CSS (globals.css).
+          This makes <main> always the same width regardless of content height,
+          so the StatusBar above never shifts horizontally between sections.
+        */}
+        <main className="main-scroll flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-6 bg-card">
           {children}
         </main>
       </div>

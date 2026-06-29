@@ -30,6 +30,7 @@ export const api = {
     summary:    () => get<any>('/portfolio/summary'),
     pnl:        () => get<any>('/portfolio/pnl'),
     positions:  () => get<any[]>('/portfolio/positions'),
+    themes:     () => get<any[]>('/portfolio/themes'),
     flags:      () => get<any[]>('/portfolio/flags'),
     wheel:      () => get<any[]>('/portfolio/wheel'),
     wheelStats: () => get<any>('/portfolio/wheel-stats'),

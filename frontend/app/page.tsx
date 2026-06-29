@@ -9,11 +9,11 @@ export default async function PositionsPage() {
   ])
 
   return (
-    <div className="space-y-8">
+    <div className="h-full flex flex-col gap-8">
 
       {/* Active Flags */}
       {flags && flags.length > 0 && (
-        <section>
+        <section className="flex-shrink-0">
           <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Active Flags</h2>
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <table className="w-full text-sm">
@@ -41,11 +41,11 @@ export default async function PositionsPage() {
       )}
 
       {/* All Positions */}
-      <section>
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+      <section className="flex-1 flex flex-col min-h-0">
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 flex-shrink-0">
           Positions <span className="text-gray-600 font-normal">({positions?.length ?? 0})</span>
         </h2>
-        <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="bg-card border border-border rounded-xl overflow-hidden flex-1 flex flex-col min-h-0">
           <PositionsTable positions={positions ?? []} />
         </div>
       </section>
