@@ -25,16 +25,8 @@ def _event(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-async def _bridge_available() -> bool:
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_unix_connection(SOCKET_PATH), timeout=2
-        )
-        writer.close()
-        await writer.wait_closed()
-        return True
-    except Exception:
-        return False
+def _bridge_available() -> bool:
+    return Path(SOCKET_PATH).exists()
 
 
 async def _stream_refresh():
@@ -43,7 +35,7 @@ async def _stream_refresh():
     _log("START  ", "══════════════════════════════════════════════════")
     _log("START  ", "RUN START  source=manual")
 
-    bridge_up = await _bridge_available()
+    bridge_up = _bridge_available()
 
     # ── Phase 1 ───────────────────────────────────────────────────────────────
     if bridge_up:
@@ -138,7 +130,7 @@ async def refresh_stream():
 
 @router.get("/bridge/status")
 async def bridge_status():
-    running = await _bridge_available()
+    running = _bridge_available()
     return {"running": running}
 
 

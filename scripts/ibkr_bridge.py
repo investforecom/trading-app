@@ -110,10 +110,14 @@ def emit(conn: socket.socket, obj: dict) -> bool:
         return False
 
 
+CLAUDE_TIMEOUT = 600  # seconds before we kill a hung claude -p (normal runs take ~300-360s)
+
+
 def _run_claude(prompt: str, allowed_tools: str, max_turns: str, conn: socket.socket | None = None) -> bool:
     """
     Spawn claude -p, stream assistant text back via conn (if provided).
-    Returns True on success.
+    Returns True on success. Kills the process after CLAUDE_TIMEOUT seconds
+    so a zombie/hung claude never holds the refresh lock indefinitely.
     """
     proc = subprocess.Popen(
         [CLAUDE, "--print", "--verbose", "--output-format", "stream-json",
@@ -127,30 +131,41 @@ def _run_claude(prompt: str, allowed_tools: str, max_turns: str, conn: socket.so
         cwd=WORK_DIR,
     )
 
-    done = False
-    for raw in proc.stdout:
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            ev = json.loads(raw)
-            if ev.get("type") == "assistant":
-                for block in ev.get("message", {}).get("content", []):
-                    if block.get("type") == "text":
-                        text = block["text"].strip()
-                        if text and conn and not emit(conn, {"log": text}):
-                            proc.terminate()
-                            return False
-            elif ev.get("type") == "result":
-                done = True
-        except json.JSONDecodeError:
-            if conn and raw:
-                if not emit(conn, {"log": raw}):
-                    proc.terminate()
-                    return False
+    def _kill():
+        rlog.error(f"claude -p exceeded {CLAUDE_TIMEOUT}s — killing")
+        if conn:
+            emit(conn, {"error": f"claude -p timed out after {CLAUDE_TIMEOUT}s"})
+        proc.kill()
 
-    proc.wait()
-    return done or proc.returncode == 0
+    timer = threading.Timer(CLAUDE_TIMEOUT, _kill)
+    timer.start()
+    try:
+        done = False
+        for raw in proc.stdout:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                ev = json.loads(raw)
+                if ev.get("type") == "assistant":
+                    for block in ev.get("message", {}).get("content", []):
+                        if block.get("type") == "text":
+                            text = block["text"].strip()
+                            if text and conn and not emit(conn, {"log": text}):
+                                proc.terminate()
+                                return False
+                elif ev.get("type") == "result":
+                    done = True
+            except json.JSONDecodeError:
+                if conn and raw:
+                    if not emit(conn, {"log": raw}):
+                        proc.terminate()
+                        return False
+
+        proc.wait()
+        return done or proc.returncode == 0
+    finally:
+        timer.cancel()
 
 
 def _run_notes_background():

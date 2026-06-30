@@ -151,6 +151,8 @@ def resolve_current_value(
         mv  = entry["mv"]
         qty = abs(entry["qty"])
         cv  = mv * fx_gbp if underlying == "IQE" else mv
+        if consumed is not None:
+            consumed.add(underlying.upper())
         return cv, qty
 
     if len(parts) < 3:
@@ -318,6 +320,7 @@ def auto_create_missing_options(
     consumed: set,
     nav: float,
     today: str,
+    stocks: dict,
     account_id: int = 1,
     owner_id: int = 1,
 ) -> int:
@@ -454,6 +457,50 @@ def auto_create_missing_options(
             "is_short": True,
         })
 
+    # ── Pass 3: unmatched long single calls → LEAP ───────────────────────────
+    for opt in unmatched:
+        if opt["key_yr"] in pair_consumed:
+            continue
+        if opt["ibkr_qty"] <= 0:
+            continue  # only long options
+        if opt["cp"] != "CALL":
+            continue  # skip long puts (protective puts; not LEAPs)
+        abs_qty = abs(opt["ibkr_qty"])
+        avg     = opt["avg_price"]
+        mv      = opt["mv"]
+        symbol  = f"{opt['und']}_{opt['mon3']}{opt['year2']}_{_fmt(opt['strike'])}C"
+        cost_basis    = round(avg * abs_qty * 100, 2) if avg > 0 else round(abs(mv), 2)
+        current_value = round(abs(mv), 2)
+        to_create.append({
+            "symbol": symbol, "underlying": opt["und"], "strategy": "LEAP",
+            "abs_qty": abs_qty, "cost_basis": cost_basis, "current_value": current_value,
+            "is_short": False,
+        })
+
+    # ── Pass 4: unmatched IBKR stocks → Thematic ─────────────────────────────
+    SKIP_TICKERS = {"SGOV"}
+    for ticker, entry in stocks.items():
+        t = ticker.upper()
+        if t in SKIP_TICKERS:
+            continue
+        if t in consumed:
+            continue
+        abs_qty = abs(entry["qty"])
+        mv      = entry["mv"]
+        avg_price = 0.0
+        for p in positions_raw:
+            asset = p.get("asset_class") or ("OPT" if any(w in p["contract_description"] for w in ("CALL", "PUT")) else "STK")
+            if asset == "STK" and p["contract_description"].split()[0].upper() == t:
+                avg_price = float(p.get("average_price", 0) or 0)
+                break
+        cost_basis    = round(avg_price * abs_qty, 2) if avg_price > 0 else round(abs(mv), 2)
+        current_value = round(abs(mv), 2)
+        to_create.append({
+            "symbol": t, "underlying": t, "strategy": "Thematic",
+            "abs_qty": abs_qty, "cost_basis": cost_basis, "current_value": current_value,
+            "is_short": False,
+        })
+
     # ── Insert all new positions ───────────────────────────────────────────────
     created = 0
     for item in to_create:
@@ -567,7 +614,7 @@ def run(routine_dir: Path = ROUTINE_DIR) -> bool:
             )
 
             created = auto_create_missing_options(
-                cur, positions_raw, consumed, nav, today
+                cur, positions_raw, consumed, nav, today, stocks
             )
 
         msg = f"positions: {updated} updated, {created} auto-created, {missed} no IBKR match"
