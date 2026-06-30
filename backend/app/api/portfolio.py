@@ -94,6 +94,12 @@ def positions():
 def themes():
     return query("""
         WITH today AS (SELECT MAX(snapshot_date) AS d FROM position_snapshots),
+        acct AS (
+            SELECT nav, cash, sgov
+            FROM account_snapshots
+            WHERE account_id = 1
+            ORDER BY snapshot_date DESC LIMIT 1
+        ),
         legs AS (
             SELECT
                 CASE
@@ -110,29 +116,57 @@ def themes():
             JOIN positions p ON p.id = ps.position_id
             WHERE ps.snapshot_date = (SELECT d FROM today)
               AND p.closed_date IS NULL
+              AND p.strategy::text <> 'cash'
+        ),
+        theme_agg AS (
+            SELECT
+                theme,
+                COUNT(DISTINCT underlying)                          AS tickers,
+                COUNT(*)                                            AS legs,
+                ROUND(SUM(cost),  0)                               AS cost,
+                ROUND(SUM(value), 0)                               AS value,
+                ROUND(SUM(value - cost), 0)                        AS pnl,
+                ROUND(100.0 * SUM(value - cost) / NULLIF(SUM(cost), 0), 1) AS gain_pct,
+                ROUND(SUM(pct_nav), 1)                             AS pct_nav,
+                json_agg(
+                    json_build_object(
+                        'underlying', underlying,
+                        'strategy',   strategy,
+                        'cost',       cost,
+                        'value',      value,
+                        'gain_pct',   gain_pct,
+                        'pct_nav',    pct_nav
+                    )
+                    ORDER BY cost DESC NULLS LAST
+                ) AS positions
+            FROM legs
+            GROUP BY theme
+        ),
+        cash_row AS (
+            SELECT
+                'Cash'::text                                        AS theme,
+                2::bigint                                           AS tickers,
+                2::bigint                                           AS legs,
+                ROUND(a.cash + a.sgov, 0)                          AS cost,
+                ROUND(a.cash + a.sgov, 0)                          AS value,
+                0::numeric                                          AS pnl,
+                0::numeric                                          AS gain_pct,
+                ROUND(100.0 * (a.cash + a.sgov) / NULLIF(a.nav, 0), 1) AS pct_nav,
+                json_build_array(
+                    json_build_object('underlying', 'SGOV',  'strategy', 'cash',
+                        'cost', ROUND(a.sgov, 0), 'value', ROUND(a.sgov, 0),
+                        'gain_pct', 0, 'pct_nav', ROUND(100.0 * a.sgov / NULLIF(a.nav, 0), 2)),
+                    json_build_object('underlying', 'Cash',  'strategy', 'cash',
+                        'cost', ROUND(a.cash, 0), 'value', ROUND(a.cash, 0),
+                        'gain_pct', 0, 'pct_nav', ROUND(100.0 * a.cash / NULLIF(a.nav, 0), 2))
+                )                                                   AS positions
+            FROM acct a
         )
-        SELECT
-            theme,
-            COUNT(DISTINCT underlying)                          AS tickers,
-            COUNT(*)                                            AS legs,
-            ROUND(SUM(cost),  0)                               AS cost,
-            ROUND(SUM(value), 0)                               AS value,
-            ROUND(SUM(value - cost), 0)                        AS pnl,
-            ROUND(100.0 * SUM(value - cost) / NULLIF(SUM(cost), 0), 1) AS gain_pct,
-            ROUND(SUM(pct_nav), 1)                             AS pct_nav,
-            json_agg(
-                json_build_object(
-                    'underlying', underlying,
-                    'strategy',   strategy,
-                    'cost',       cost,
-                    'value',      value,
-                    'gain_pct',   gain_pct,
-                    'pct_nav',    pct_nav
-                )
-                ORDER BY cost DESC NULLS LAST
-            ) AS positions
-        FROM legs
-        GROUP BY theme
+        SELECT * FROM (
+            SELECT * FROM theme_agg
+            UNION ALL
+            SELECT * FROM cash_row
+        ) combined
         ORDER BY
             CASE theme
                 WHEN 'Wheel'    THEN 2
@@ -140,7 +174,7 @@ def themes():
                 WHEN 'Untagged' THEN 4
                 ELSE 1
             END,
-            SUM(cost) DESC NULLS LAST
+            cost DESC NULLS LAST
     """)
 
 
