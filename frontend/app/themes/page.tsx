@@ -93,9 +93,9 @@ function ThemeCard({ t, deployedNav }: { t: any; deployedNav: number }) {
 
       <div className="border-t border-border/50 divide-y divide-border/30">
         {(t.positions ?? []).map((p: any, i: number) => (
-          <div key={i} className="px-3 py-0.5 flex items-center gap-1 text-[11px]">
+          <div key={i} className="px-3 py-0.5 flex items-center gap-1 text-[12px]">
             <span className="font-mono font-medium text-gray-200 w-12 truncate">{p.underlying}</span>
-            <span className="text-[9px] text-gray-600 flex-1 truncate">{p.strategy}</span>
+            <span className="text-[10px] text-gray-600 flex-1 truncate">{p.strategy}</span>
             <span className="tabular-nums text-gray-400 w-14 text-right">{fmtUsd(p.value)}</span>
             <span className={`tabular-nums w-11 text-right ${t.theme === 'Cash' ? 'text-gray-500' : gainColor(p.gain_pct)}`}>
               {t.theme === 'Cash'
@@ -181,21 +181,19 @@ function WheelCCCard({ t, deployedNav }: { t: any; deployedNav: number }) {
         {Object.entries(byUnderlying).map(([und, { stock, cc }]) => (
           <div key={und}>
             {stock && (
-              <div className="px-3 py-0.5 flex items-center gap-1 text-[11px]">
+              <div className="px-3 py-0.5 flex items-center gap-1 text-[12px]">
                 <span className="font-mono font-medium text-gray-200 w-12 truncate">{und}</span>
-                <span className="text-[9px] text-gray-600 flex-1">
-                  {Number(stock.qty ?? 0) > 0 ? `${stock.qty}sh` : 'stock'}
-                </span>
+                <span className="text-[10px] text-gray-600 flex-1">stock</span>
                 <span className="tabular-nums text-gray-400 w-14 text-right">{fmtUsd(stock.value)}</span>
                 <span className={`tabular-nums w-11 text-right ${gainColor(stock.gain_pct)}`}>
                   {stock.gain_pct > 0 ? '+' : ''}{stock.gain_pct}%
                 </span>
               </div>
             )}
-            {cc && Number(cc.qty ?? -1) !== 0 && (
-              <div className="px-3 py-0.5 flex items-center gap-1 text-[10px] bg-white/[0.02]">
+            {cc && Number(cc.value) > 0 && (
+              <div className="px-3 py-0.5 flex items-center gap-1 text-[11px] bg-white/[0.02]">
                 <span className="text-sky-400/60 w-12 truncate pl-2">↳ CC</span>
-                <span className="text-[9px] text-gray-700 flex-1">
+                <span className="text-[10px] text-gray-700 flex-1">
                   {cc.strike ? `$${cc.strike} call` : 'call'}
                   {Number(cc.value) > Number(cc.cost)
                     ? <span className="text-red-400/70"> ITM</span>
@@ -267,9 +265,9 @@ function WheelSPCard({ t, deployedNav }: { t: any; deployedNav: number }) {
       {/* Per-put rows */}
       <div className="border-t border-border/50 divide-y divide-border/30">
         {positions.map((p: any, i: number) => (
-          <div key={i} className="px-3 py-0.5 flex items-center gap-1 text-[11px]">
+          <div key={i} className="px-3 py-0.5 flex items-center gap-1 text-[12px]">
             <span className="font-mono font-medium text-gray-200 w-12 truncate">{p.underlying}</span>
-            <span className="text-[9px] text-gray-600 flex-1 truncate">
+            <span className="text-[10px] text-gray-600 flex-1 truncate">
               {p.strike ? `$${p.strike}P` : 'put'}
               {p.assignment_risk ? ` · ${fmtUsd(p.assignment_risk)}` : ''}
             </span>
