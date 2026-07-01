@@ -190,18 +190,22 @@ function WheelCCCard({ t, deployedNav }: { t: any; deployedNav: number }) {
                 </span>
               </div>
             )}
-            {cc && Number(cc.value) > 0 && (
+            {cc && (
               <div className="px-3 py-0.5 flex items-center gap-1 text-[11px] bg-white/[0.02]">
                 <span className="text-sky-400/60 w-12 truncate pl-2">↳ CC</span>
                 <span className="text-[10px] text-gray-700 flex-1">
                   {cc.strike ? `$${cc.strike} call` : 'call'}
-                  {Number(cc.value) > Number(cc.cost)
-                    ? <span className="text-red-400/70"> ITM</span>
-                    : null}
+                  {Number(cc.value) === 0
+                    ? <span className="text-gray-600"> expired</span>
+                    : Number(cc.value) > Number(cc.cost)
+                      ? <span className="text-red-400/70"> ITM</span>
+                      : null}
                 </span>
-                <span className="tabular-nums text-sky-400/60 w-14 text-right">{fmtUsd(cc.value)}</span>
-                <span className={`tabular-nums w-11 text-right ${gainColor(cc.gain_pct)}`}>
-                  {cc.gain_pct > 0 ? '+' : ''}{cc.gain_pct}%
+                <span className="tabular-nums text-sky-400/60 w-14 text-right">
+                  {Number(cc.value) === 0 ? <span className="text-gray-700">{fmtUsd(cc.cost)} rcvd</span> : fmtUsd(cc.value)}
+                </span>
+                <span className={`tabular-nums w-11 text-right ${Number(cc.value) === 0 ? 'text-emerald-700' : gainColor(cc.gain_pct)}`}>
+                  {Number(cc.value) === 0 ? '+100%' : `${cc.gain_pct > 0 ? '+' : ''}${cc.gain_pct}%`}
                 </span>
               </div>
             )}
