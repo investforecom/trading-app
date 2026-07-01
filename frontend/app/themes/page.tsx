@@ -112,8 +112,10 @@ function ThemeCard({ t, deployedNav }: { t: any; deployedNav: number }) {
             <span className="font-mono font-medium text-gray-200 w-12 truncate">{p.underlying}</span>
             <span className="text-[9px] text-gray-600 flex-1 truncate">{p.strategy}</span>
             <span className="tabular-nums text-gray-400 w-14 text-right">${Number(p.value).toLocaleString()}</span>
-            <span className={`tabular-nums w-11 text-right ${gainColor(p.gain_pct)}`}>
-              {p.gain_pct > 0 ? '+' : ''}{p.gain_pct}%
+            <span className={`tabular-nums w-11 text-right ${t.theme === 'Cash' ? 'text-gray-500' : gainColor(p.gain_pct)}`}>
+              {t.theme === 'Cash'
+                ? `${p.pct_nav}% NAV`
+                : `${p.gain_pct > 0 ? '+' : ''}${p.gain_pct}%`}
             </span>
           </div>
         ))}
