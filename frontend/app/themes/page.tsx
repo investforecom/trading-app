@@ -63,14 +63,25 @@ function ThemeCard({ t, deployedNav }: { t: any; deployedNav: number }) {
             {t.tickers}t · {t.legs}L
           </div>
         </div>
-        <div className="text-right flex-shrink-0">
-          <div className={`text-xs font-semibold tabular-nums ${gainColor(gainNum)}`}>
-            {fmtPnl(pnlNum)}
+        {t.theme === 'Cash' ? (
+          <div className="text-right flex-shrink-0">
+            <div className="text-xs font-semibold tabular-nums text-gray-400">
+              ${Number(t.value).toLocaleString()}
+            </div>
+            <div className="text-[10px] tabular-nums leading-tight text-gray-600">
+              {navPct}% NAV
+            </div>
           </div>
-          <div className={`text-[10px] tabular-nums leading-tight ${gainColor(gainNum)}`}>
-            {gainNum > 0 ? '+' : ''}{gainNum}%
+        ) : (
+          <div className="text-right flex-shrink-0">
+            <div className={`text-xs font-semibold tabular-nums ${gainColor(gainNum)}`}>
+              {fmtPnl(pnlNum)}
+            </div>
+            <div className={`text-[10px] tabular-nums leading-tight ${gainColor(gainNum)}`}>
+              {gainNum > 0 ? '+' : ''}{gainNum}%
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Allocation bar — width = share of deployed capital */}
