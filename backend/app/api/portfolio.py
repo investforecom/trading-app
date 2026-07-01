@@ -103,15 +103,27 @@ def themes():
         legs AS (
             SELECT
                 CASE
-                    WHEN p.strategy::text IN ('WheelSP', 'WheelSC') THEN 'Wheel'
+                    WHEN p.strategy::text = 'WheelSC' THEN 'Wheel-CC'
+                    WHEN p.strategy::text = 'WheelSP' THEN 'Wheel-SP'
                     ELSE COALESCE(p.theme::text, 'Untagged')
                 END                                              AS theme,
                 p.underlying,
+                p.symbol::text                                   AS symbol,
                 p.strategy::text                                 AS strategy,
                 ROUND(ps.cost_basis::numeric,    0)              AS cost,
                 ROUND(ps.current_value::numeric, 0)              AS value,
                 ROUND(ps.gain_pct::numeric,      1)              AS gain_pct,
-                ROUND(ps.pct_nav::numeric,       2)              AS pct_nav
+                ROUND(ps.pct_nav::numeric,       2)              AS pct_nav,
+                -- Strike price extracted from symbol (e.g. IREN_JUL02_41.5P → 41.5)
+                CASE WHEN p.symbol::text ~ '_[0-9.]+[PC]$'
+                     THEN NULLIF(REGEXP_REPLACE(p.symbol::text, '.*_([0-9.]+)[PC]$', '\\1'), '')::numeric
+                     ELSE NULL END                               AS strike,
+                -- Assignment risk for puts: strike × 100 × |qty|
+                CASE WHEN p.strategy::text = 'WheelSP' AND p.symbol::text ~ '_[0-9.]+P$'
+                     THEN ROUND(
+                         NULLIF(REGEXP_REPLACE(p.symbol::text, '.*_([0-9.]+)P$', '\\1'), '')::numeric
+                         * 100 * ABS(ps.qty), 0)
+                     ELSE NULL END                               AS assignment_risk
             FROM position_snapshots ps
             JOIN positions p ON p.id = ps.position_id
             WHERE ps.snapshot_date = (SELECT d FROM today)
@@ -130,12 +142,15 @@ def themes():
                 ROUND(SUM(pct_nav), 1)                             AS pct_nav,
                 json_agg(
                     json_build_object(
-                        'underlying', underlying,
-                        'strategy',   strategy,
-                        'cost',       cost,
-                        'value',      value,
-                        'gain_pct',   gain_pct,
-                        'pct_nav',    pct_nav
+                        'underlying',      underlying,
+                        'symbol',          symbol,
+                        'strategy',        strategy,
+                        'cost',            cost,
+                        'value',           value,
+                        'gain_pct',        gain_pct,
+                        'pct_nav',         pct_nav,
+                        'strike',          strike,
+                        'assignment_risk', assignment_risk
                     )
                     ORDER BY cost DESC NULLS LAST
                 ) AS positions
@@ -169,9 +184,10 @@ def themes():
         ) combined
         ORDER BY
             CASE theme
-                WHEN 'Wheel'    THEN 2
-                WHEN 'Cash'     THEN 3
-                WHEN 'Untagged' THEN 4
+                WHEN 'Wheel-CC' THEN 2
+                WHEN 'Wheel-SP' THEN 3
+                WHEN 'Cash'     THEN 4
+                WHEN 'Untagged' THEN 5
                 ELSE 1
             END,
             cost DESC NULLS LAST
