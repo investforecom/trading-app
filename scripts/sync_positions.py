@@ -133,7 +133,7 @@ def resolve_current_value(
     Keys consumed during matching are added to the `consumed` set so
     auto_create_missing_options can skip them.
     """
-    STOCK_STRATEGIES = {"Thematic", "2x-ETF", "cash"}
+    STOCK_STRATEGIES = {"Thematic", "2x-ETF", "cash", "WheelASG"}
     sym   = symbol.upper()
     parts = sym.split("_")
 
@@ -247,10 +247,28 @@ def upsert_position_snapshots(
     """
     Returns (updated, missed, consumed_keys).
     consumed_keys: IBKR opt index keys matched to existing DB positions.
+
+    Split stock handling: when a _STK position (WheelSC assigned lot) exists for the
+    same underlying as a 2x-ETF/Thematic position, IBKR reports a single combined
+    qty. We split it: _STK gets its DB qty (fixed — never overwritten from IBKR),
+    the base ticker gets the residual. MV is allocated proportionally.
     """
     updated  = 0
     missed   = 0
     consumed: set = set()
+
+    # Pre-scan: build split map for underlyings that have a _STK position
+    # {UNDERLYING_UPPER: {"fixed_qty": int, "cost_basis": float, "assign_px": float}}
+    stk_splits: dict[str, dict] = {}
+    for pos in positions_db:
+        if pos["symbol"].upper().endswith("_STK"):
+            und = pos["underlying"].upper()
+            assign_px = float(pos.get("assignment_price") or 0)
+            stk_splits[und] = {
+                "fixed_qty":  abs(int(pos["qty"] or 0)),
+                "cost_basis": float(pos["cost_basis"] or 0),
+                "assign_px":  assign_px,
+            }
 
     for pos in positions_db:
         pid        = pos["id"]
@@ -259,20 +277,52 @@ def upsert_position_snapshots(
         underlying = pos["underlying"]
         cost_basis = float(pos["cost_basis"] or 0)
         db_qty     = int(pos["qty"] or 0)
+        assign_px  = float(pos.get("assignment_price") or 0)
+        sym_upper  = symbol.upper()
+        und_upper  = underlying.upper()
 
-        cv, ibkr_qty = resolve_current_value(
-            symbol, strategy, underlying, stocks, opts, opts_day, fx_gbp, consumed
-        )
-        if cv is None:
-            missed += 1
-            continue
+        # ── _STK leg: fixed qty, proportional MV, cost from assignment_price ─
+        if sym_upper.endswith("_STK") and und_upper in stk_splits:
+            ibkr_entry = stocks.get(underlying)
+            if ibkr_entry is None:
+                missed += 1
+                continue
+            ibkr_total = abs(ibkr_entry["qty"])
+            ibkr_mv    = ibkr_entry["mv"]
+            fixed_qty  = abs(db_qty)  # locked; never pull from IBKR
+            cv         = round(ibkr_mv * fixed_qty / ibkr_total, 2) if ibkr_total else 0
+            qty        = fixed_qty
+            # Cost basis: assignment_price × shares if set, else preserve DB value
+            if assign_px > 0:
+                cost_basis = round(assign_px * fixed_qty, 2)
+            consumed.add(und_upper)
 
-        # Use live IBKR qty; fall back to DB qty if IBKR didn't return one
-        qty = ibkr_qty if ibkr_qty is not None else abs(db_qty)
-        # Preserve sign from DB (short positions are negative)
-        if db_qty < 0:
-            qty = -qty
+        # ── Base stock with a _STK split: residual shares only ───────────────
+        elif und_upper in stk_splits and not sym_upper.endswith("_STK"):
+            ibkr_entry = stocks.get(underlying)
+            if ibkr_entry is None:
+                missed += 1
+                continue
+            ibkr_total = abs(ibkr_entry["qty"])
+            ibkr_mv    = ibkr_entry["mv"]
+            stk_qty    = stk_splits[und_upper]["fixed_qty"]
+            qty        = ibkr_total - stk_qty
+            cv         = round(ibkr_mv * qty / ibkr_total, 2) if ibkr_total else 0
+            consumed.add(und_upper)
 
+        # ── Normal path ───────────────────────────────────────────────────────
+        else:
+            cv, ibkr_qty = resolve_current_value(
+                symbol, strategy, underlying, stocks, opts, opts_day, fx_gbp, consumed
+            )
+            if cv is None:
+                missed += 1
+                continue
+            qty = ibkr_qty if ibkr_qty is not None else abs(db_qty)
+            if db_qty < 0:
+                qty = -qty
+
+        # ── Gain % and NAV % ─────────────────────────────────────────────────
         if qty < 0:
             gain_pct = round((cost_basis - cv) / abs(cost_basis) * 100, 4) if cost_basis else 0
         else:
@@ -567,6 +617,99 @@ def auto_create_missing_options(
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+def auto_close_missing_positions(
+    cur,
+    positions_db: list[dict],
+    stocks: dict,
+    opts: dict,
+    opts_day: dict,
+    today: str,
+    account_id: int = 1,
+) -> int:
+    """
+    Close any open position that has no matching entry in the current IBKR data.
+
+    Covers all strategies — Wheel options/stock, SWING, LDS, LEAP, Thematic,
+    2x-ETF.  Only 'cash' is exempt (SGOV and cash never expire).
+
+    Stock positions: check if underlying ticker is still present in IBKR stocks.
+    Option positions: parse the symbol and check opts (year-keyed) and opts_day
+    (month+day+year-keyed).  Short-dated WheelSP/SC symbols encode month+day
+    (e.g. JUL17); we try plausible year suffixes so they resolve correctly while
+    still catching truly expired contracts.
+    """
+    STOCK_STRATEGIES = {"WheelASG", "Thematic", "2x-ETF"}
+    SKIP_STRATEGIES  = {"cash"}
+
+    # opts_day keys are already year-agnostic: (und, mon3, day2, strike, cp)
+    # — no year component — so we check opts_day directly for short-dated symbols.
+
+    current_yr2 = date.today().year % 100
+    year_candidates = [str(y) for y in range(current_yr2 - 1, current_yr2 + 6)]
+
+    closed = 0
+    stocks_upper = {k.upper() for k in stocks}
+
+    for pos in positions_db:
+        if pos["strategy"] in SKIP_STRATEGIES:
+            continue
+
+        symbol     = pos["symbol"]
+        strategy   = pos["strategy"]
+        underlying = pos["underlying"]
+        sym_upper  = symbol.upper()
+        und_upper  = underlying.upper()
+
+        still_open = False
+
+        if strategy in STOCK_STRATEGIES or sym_upper.endswith("_STK"):
+            still_open = und_upper in stocks_upper
+
+        else:
+            parts = sym_upper.split("_")
+            if len(parts) >= 3:
+                monyy = parts[1]          # e.g. "JUL17" or "DEC27"
+                mon3  = monyy[:3].upper() # "JUL"
+                tail  = monyy[3:]         # "17" (day) or "27" (year)
+                legs  = re.findall(r"([\d.]+)([CP])", parts[2])
+
+                for strike, cp_char in legs:
+                    cp = "CALL" if cp_char == "C" else "PUT"
+
+                    # Direct year-keyed lookup (works for spreads / LEAPs)
+                    if (und_upper, tail, strike, cp) in opts:
+                        still_open = True
+                        break
+
+                    # Short-dated symbol: tail is the day, not the year.
+                    # Try all plausible years in opts.
+                    for yr in year_candidates:
+                        if (und_upper, yr, strike, cp) in opts:
+                            still_open = True
+                            break
+
+                    if still_open:
+                        break
+
+                    # opts_day lookup: (und, mon3, day2, strike, cp) — no year
+                    if (und_upper, mon3, tail, strike, cp) in opts_day:
+                        still_open = True
+                        break
+
+        if not still_open:
+            cur.execute("""
+                UPDATE positions SET closed_date = %s
+                WHERE id = %s AND closed_date IS NULL
+            """, (today, pos["id"]))
+            if cur.rowcount:
+                msg = f"auto-closed: {symbol} (not in IBKR)"
+                print(f"  {msg}")
+                rlog.ok(msg)
+                closed += 1
+
+    return closed
+
+
 def run(routine_dir: Path = ROUTINE_DIR) -> bool:
     state_path = routine_dir / "account_state.json"
     ibkr_path  = routine_dir / "ibkr_positions.json"
@@ -593,18 +736,26 @@ def run(routine_dir: Path = ROUTINE_DIR) -> bool:
 
             upsert_account_snapshot(cur, state)
 
-            # Load open positions from DB (most recent snapshot for cost_basis ref)
+            # Load ALL open positions with their most recent snapshot.
+            # Using LATERAL so positions with no current-date snapshot (e.g. old
+            # expired WheelSPs never cleaned up) are still included — both for the
+            # upsert attempt AND for auto_close_missing_positions.
             cur.execute("""
                 SELECT p.id, p.symbol, p.underlying, p.strategy,
-                       ps.cost_basis, ps.qty
+                       p.assignment_price,
+                       COALESCE(ps.cost_basis, 0) AS cost_basis,
+                       COALESCE(ps.qty, 0)        AS qty
                 FROM positions p
                 JOIN accounts a ON a.id = p.account_id
-                JOIN position_snapshots ps ON ps.position_id = p.id
+                LEFT JOIN LATERAL (
+                    SELECT cost_basis, qty
+                    FROM position_snapshots
+                    WHERE position_id = p.id
+                    ORDER BY snapshot_date DESC
+                    LIMIT 1
+                ) ps ON true
                 WHERE a.ibkr_account_id = 'U15760849'
                   AND p.closed_date IS NULL
-                  AND ps.snapshot_date = (
-                      SELECT MAX(snapshot_date) FROM position_snapshots
-                  )
                 ORDER BY p.symbol
             """)
             positions_db = list(cur.fetchall())
@@ -617,7 +768,11 @@ def run(routine_dir: Path = ROUTINE_DIR) -> bool:
                 cur, positions_raw, consumed, nav, today, stocks
             )
 
-        msg = f"positions: {updated} updated, {created} auto-created, {missed} no IBKR match"
+            auto_closed = auto_close_missing_positions(
+                cur, positions_db, stocks, opts, opts_day, today
+            )
+
+        msg = f"positions: {updated} updated, {created} auto-created, {auto_closed} auto-closed, {missed} no IBKR match"
         print(f"  {msg}")
         print(f"  snapshot date: {today}")
         rlog.ok(msg)

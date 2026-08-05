@@ -13,34 +13,8 @@ CREATE TYPE strategy_type AS ENUM (
     'other'
 );
 
-CREATE TYPE theme_type AS ENUM (
-    'AI-DC',
-    'AI-Semis',
-    'AI-Storage',
-    'Neo-Cloud',
-    'Large-Cap-Tech',
-    'Fintech',
-    'Financials',
-    'Software-Recovery',
-    'Nuclear-Power',
-    'Solar-Energy',
-    'Nat-Gas',
-    'Battery-Storage',
-    'Drones-Defense',
-    'Gold-Macro',
-    'Crit-Minerals',
-    'Consumer',
-    'Edge-HPC',
-    'Quantum',
-    'Photonics',
-    'Autonomous-SW',
-    'Space',
-    'Crypto-Bitcoin',
-    'Healthcare',
-    'Cybersecurity',
-    'Income',
-    'Cash'
-);
+-- theme_type enum removed in 015_theme_text.sql (2026-08-05).
+-- Theme is now a plain TEXT column — no schema change needed to add/rename themes.
 
 CREATE TYPE mgmt_tier_type AS ENUM ('Runner', 'Monitor', 'On-notice');
 
