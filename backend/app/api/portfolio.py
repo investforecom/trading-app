@@ -86,6 +86,7 @@ def positions():
         WHERE ps.snapshot_date = (SELECT d FROM today)
           AND p.strategy <> 'cash'
           AND p.closed_date IS NULL
+          AND ABS(ps.qty) > 0
         ORDER BY ps.pct_nav DESC NULLS LAST
     """)
 
@@ -103,8 +104,9 @@ def themes():
         legs AS (
             SELECT
                 CASE
-                    WHEN p.strategy::text = 'WheelSC' THEN 'Wheel-CC'
-                    WHEN p.strategy::text = 'WheelSP' THEN 'Wheel-SP'
+                    WHEN p.strategy::text = 'WheelASG' THEN 'Wheel-CC'
+                    WHEN p.strategy::text = 'WheelSC'  THEN 'Wheel-CC'
+                    WHEN p.strategy::text = 'WheelSP'  THEN 'Wheel-SP'
                     ELSE COALESCE(p.theme::text, 'Untagged')
                 END                                              AS theme,
                 p.underlying,
@@ -129,6 +131,7 @@ def themes():
             WHERE ps.snapshot_date = (SELECT d FROM today)
               AND p.closed_date IS NULL
               AND p.strategy::text <> 'cash'
+              AND ABS(ps.qty) > 0
         ),
         theme_agg AS (
             SELECT
@@ -237,8 +240,9 @@ def wheel():
         FROM position_snapshots ps
         JOIN positions p ON p.id = ps.position_id
         WHERE ps.snapshot_date = (SELECT MAX(snapshot_date) FROM position_snapshots)
-          AND p.strategy IN ('WheelSP', 'WheelSC')
+          AND p.strategy IN ('WheelSP', 'WheelSC', 'WheelASG')
           AND p.closed_date IS NULL
+          AND ABS(ps.qty) > 0
         ORDER BY p.strategy, p.underlying
     """)
 
