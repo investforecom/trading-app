@@ -32,6 +32,53 @@ APP_DIR     = Path(os.environ.get("TRADING_APP_DIR", Path.home() / "workspace" /
 
 OPT_RE = re.compile(r"(\w+)\s+([A-Za-z]{3})(\d{2})'(\d{2})\s+([\d.]+)\s+(CALL|PUT)")
 
+# ── Theme classification ───────────────────────────────────────────────────────
+# Maps underlying ticker → theme. Used when auto-creating positions so every
+# new row lands in a theme from day one. Extend this dict as new tickers appear;
+# anything not listed falls back to "Miscellaneous".
+THEME_MAP: dict[str, str] = {
+    # AI-Infrastructure — GPUs, accelerators, data-center supply chain, compute mining
+    "NVDA": "AI-Infrastructure", "NVDL": "AI-Infrastructure", "AMD": "AI-Infrastructure",
+    "SMCI": "AI-Infrastructure", "VRT":  "AI-Infrastructure", "AMKR": "AI-Infrastructure",
+    "DRAM": "AI-Infrastructure", "FPS":  "AI-Infrastructure", "OSS":  "AI-Infrastructure",
+    "CRDO": "AI-Infrastructure", "AVGG": "AI-Infrastructure", "CIFR": "AI-Infrastructure",
+    "CLS":  "AI-Infrastructure", "ARM":  "AI-Infrastructure", "MRVL": "AI-Infrastructure",
+    "ALAB": "AI-Infrastructure",
+    # Cloud-Compute — hyperscale cloud, AI compute platforms, HPC
+    "CRWV": "Cloud-Compute", "IREN": "Cloud-Compute", "ORCL": "Cloud-Compute",
+    "MSFT": "Cloud-Compute",
+    # Large-Cap-Tech — mega-cap tech and their leveraged ETF proxies
+    "AMZN": "Large-Cap-Tech", "AAPL": "Large-Cap-Tech",
+    "GOOGL": "Large-Cap-Tech", "GOOG": "Large-Cap-Tech", "META": "Large-Cap-Tech",
+    "MSFU": "Large-Cap-Tech",  "METU": "Large-Cap-Tech",  "AMZU": "Large-Cap-Tech",
+    # Software — SaaS, platforms, consumer-tech software
+    "UBER": "Software", "PATH": "Software", "SPOT": "Software",
+    "NFLX": "Software", "CRM":  "Software", "NOW":  "Software",
+    # Fintech — payments, lending, alternative asset management
+    "SOFI": "Fintech", "BN":   "Fintech", "PYPL": "Fintech",
+    "SQ":   "Fintech", "COIN": "Fintech", "AFRM": "Fintech",
+    # Energy-Transition — storage, nuclear, grid, renewables
+    "AMPX": "Energy-Transition", "TE":   "Energy-Transition", "LEU":  "Energy-Transition",
+    "BE":   "Energy-Transition", "SHLS": "Energy-Transition", "NEXT": "Energy-Transition",
+    "FLNC": "Energy-Transition", "XLU":  "Energy-Transition",
+    # Defense-Space — aerospace, defense, satellite, dual-use
+    "RKLB": "Defense-Space", "KRKNF": "Defense-Space", "ONDS": "Defense-Space",
+    "PL":   "Defense-Space", "USAR":  "Defense-Space", "LMT":  "Defense-Space",
+    "RTX":  "Defense-Space", "NOC":   "Defense-Space", "GD":   "Defense-Space",
+    # Photonics — optical interconnect, lidar, photonic semiconductors
+    "FOTO": "Photonics", "AAOI": "Photonics", "LITE": "Photonics",
+    "COHR": "Photonics", "IIVI": "Photonics", "LASR": "Photonics",
+    # Cash — short-duration T-bill ETFs
+    "SGOV": "Cash", "SHV": "Cash", "BIL": "Cash", "TBIL": "Cash",
+    # Miscellaneous — consumer brands, speculative, does not fit above
+    "BROS": "Miscellaneous", "ONON": "Miscellaneous", "PURR": "Miscellaneous",
+}
+
+
+def classify_theme(underlying: str) -> str:
+    """Return the theme for a given underlying ticker, defaulting to Miscellaneous."""
+    return THEME_MAP.get(underlying.upper(), "Miscellaneous")
+
 
 # ── DB connection ─────────────────────────────────────────────────────────────
 
@@ -573,14 +620,15 @@ def auto_create_missing_options(
             gain_pct = 0
         pct_nav = round(abs(current_value) / nav * 100, 4) if nav else 0
 
+        theme = classify_theme(underlying)
         cur.execute("""
             INSERT INTO positions
-                (owner_id, account_id, symbol, underlying, strategy,
+                (owner_id, account_id, symbol, underlying, strategy, theme,
                  opened_date, qty_at_open, cost_basis_at_open, source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'ibkr-auto')
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'ibkr-auto')
             ON CONFLICT (account_id, symbol) WHERE closed_date IS NULL DO NOTHING
             RETURNING id
-        """, (owner_id, account_id, symbol, underlying, strategy,
+        """, (owner_id, account_id, symbol, underlying, strategy, theme,
               today, abs_qty, cost_basis))
         row = cur.fetchone()
 
@@ -607,7 +655,7 @@ def auto_create_missing_options(
         """, (position_id, owner_id, today,
               db_qty, cost_basis, abs(current_value), gain_pct, pct_nav))
 
-        msg = f"auto-created: {symbol} | strategy={strategy} | qty={abs_qty} | cost_basis=${cost_basis:.2f}"
+        msg = f"auto-created: {symbol} | strategy={strategy} | theme={theme} | qty={abs_qty} | cost_basis=${cost_basis:.2f}"
         print(f"  {msg}")
         rlog.ok(msg)
         created += 1
