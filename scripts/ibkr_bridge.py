@@ -24,6 +24,7 @@ import subprocess
 import socket
 import sys
 import threading
+import time
 from pathlib import Path
 
 _refresh_lock = threading.Lock()
@@ -163,7 +164,7 @@ def _run_claude(prompt: str, allowed_tools: str, max_turns: str, conn: socket.so
                         return False
 
         proc.wait()
-        return done or proc.returncode == 0
+        return done
     finally:
         timer.cancel()
 
@@ -187,6 +188,7 @@ def handle(conn: socket.socket):
         rlog.phase("IBKR Fetch")
         emit(conn, {"log": "Fetching IBKR account data..."})
         rlog.info("Running claude -p (4 MCP calls)...")
+        fetch_start = time.time()
         fetch_ok = _run_claude(PROMPT_STEP1, ALLOWED_TOOLS_STEP1, "10", conn)
         if not fetch_ok:
             rlog.error("IBKR fetch failed — claude -p returned error")
@@ -196,6 +198,17 @@ def handle(conn: socket.socket):
         if not Path(STATE_OUT).exists() or not Path(IBKR_POS_OUT).exists():
             rlog.error("claude ran but output files not found")
             emit(conn, {"error": "claude ran but output files not found"})
+            return
+
+        # Verify both files were actually written during this run, not left over from a prior run.
+        state_mtime = Path(STATE_OUT).stat().st_mtime
+        pos_mtime   = Path(IBKR_POS_OUT).stat().st_mtime
+        if state_mtime < fetch_start or pos_mtime < fetch_start:
+            stale = []
+            if state_mtime  < fetch_start: stale.append("account_state.json")
+            if pos_mtime    < fetch_start: stale.append("ibkr_positions.json")
+            rlog.error(f"Stale output — Claude completed but did not write: {', '.join(stale)}")
+            emit(conn, {"error": f"IBKR fetch incomplete — {', '.join(stale)} not updated"})
             return
 
         rlog.ok("account_state.json + ibkr_positions.json written ✓")
