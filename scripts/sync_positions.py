@@ -37,41 +37,115 @@ OPT_RE = re.compile(r"(\w+)\s+([A-Za-z]{3})(\d{2})'(\d{2})\s+([\d.]+)\s+(CALL|PU
 # new row lands in a theme from day one. Extend this dict as new tickers appear;
 # anything not listed falls back to "Miscellaneous".
 THEME_MAP: dict[str, str] = {
-    # AI-Infrastructure — GPUs, accelerators, data-center supply chain, compute mining
-    "NVDA": "AI-Infrastructure", "NVDL": "AI-Infrastructure", "AMD": "AI-Infrastructure",
+    # ── AI-Infrastructure ────────────────────────────────────────────────────
+    # GPUs, accelerators, data-center supply chain, semis, compute mining
+    "NVDA": "AI-Infrastructure", "NVDL": "AI-Infrastructure", "AMD":  "AI-Infrastructure",
     "SMCI": "AI-Infrastructure", "VRT":  "AI-Infrastructure", "AMKR": "AI-Infrastructure",
     "DRAM": "AI-Infrastructure", "FPS":  "AI-Infrastructure", "OSS":  "AI-Infrastructure",
     "CRDO": "AI-Infrastructure", "AVGG": "AI-Infrastructure", "CIFR": "AI-Infrastructure",
     "CLS":  "AI-Infrastructure", "ARM":  "AI-Infrastructure", "MRVL": "AI-Infrastructure",
-    "ALAB": "AI-Infrastructure",
-    # Cloud-Compute — hyperscale cloud, AI compute platforms, HPC
-    "CRWV": "Cloud-Compute", "IREN": "Cloud-Compute", "ORCL": "Cloud-Compute",
-    "MSFT": "Cloud-Compute",
-    # Large-Cap-Tech — mega-cap tech and their leveraged ETF proxies
-    "AMZN": "Large-Cap-Tech", "AAPL": "Large-Cap-Tech",
-    "GOOGL": "Large-Cap-Tech", "GOOG": "Large-Cap-Tech", "META": "Large-Cap-Tech",
-    "MSFU": "Large-Cap-Tech",  "METU": "Large-Cap-Tech",  "AMZU": "Large-Cap-Tech",
-    # Software — SaaS, platforms, consumer-tech software
-    "UBER": "Software", "PATH": "Software", "SPOT": "Software",
-    "NFLX": "Software", "CRM":  "Software", "NOW":  "Software",
-    # Fintech — payments, lending, alternative asset management
-    "SOFI": "Fintech", "BN":   "Fintech", "PYPL": "Fintech",
-    "SQ":   "Fintech", "COIN": "Fintech", "AFRM": "Fintech",
-    # Energy-Transition — storage, nuclear, grid, renewables
+    "ALAB": "AI-Infrastructure", "INTC": "AI-Infrastructure", "MU":   "AI-Infrastructure",
+    "TSM":  "AI-Infrastructure", "KLAC": "AI-Infrastructure", "LRCX": "AI-Infrastructure",
+    "AMAT": "AI-Infrastructure", "ASML": "AI-Infrastructure", "ON":   "AI-Infrastructure",
+    "MPWR": "AI-Infrastructure", "ENTG": "AI-Infrastructure", "AMBA": "AI-Infrastructure",
+    "ACLS": "AI-Infrastructure", "RMBS": "AI-Infrastructure", "SWKS": "AI-Infrastructure",
+    "QRVO": "AI-Infrastructure", "ONTO": "AI-Infrastructure", "WOLF": "AI-Infrastructure",
+    "CEVA": "AI-Infrastructure", "SOUN": "AI-Infrastructure", "BBAI": "AI-Infrastructure",
+    # Bitcoin mining / HPC compute (AI workloads)
+    "MARA": "AI-Infrastructure", "RIOT": "AI-Infrastructure", "CLSK": "AI-Infrastructure",
+    "CORZ": "AI-Infrastructure", "HUT":  "AI-Infrastructure", "HIVE": "AI-Infrastructure",
+    "BTBT": "AI-Infrastructure",
+    # Semiconductor ETFs
+    "SMH":  "AI-Infrastructure", "SOXX": "AI-Infrastructure", "SOXL": "AI-Infrastructure",
+
+    # ── Cloud-Compute ────────────────────────────────────────────────────────
+    # Hyperscale cloud, AI compute platforms, HPC, cloud-native SaaS infra
+    "CRWV": "Cloud-Compute", "IREN":  "Cloud-Compute", "ORCL": "Cloud-Compute",
+    "MSFT": "Cloud-Compute", "SNOW":  "Cloud-Compute", "DDOG": "Cloud-Compute",
+    "NET":  "Cloud-Compute", "CFLT":  "Cloud-Compute", "MDB":  "Cloud-Compute",
+    "ZS":   "Cloud-Compute", "PANW":  "Cloud-Compute", "CRWD": "Cloud-Compute",
+    "OKTA": "Cloud-Compute", "GTLB":  "Cloud-Compute", "ESTC": "Cloud-Compute",
+    "IBM":  "Cloud-Compute", "HUBS":  "Cloud-Compute", "TWLO": "Cloud-Compute",
+
+    # ── Large-Cap-Tech ───────────────────────────────────────────────────────
+    # Mega-cap tech and their leveraged / index ETF proxies
+    "AMZN": "Large-Cap-Tech", "AAPL": "Large-Cap-Tech", "GOOGL": "Large-Cap-Tech",
+    "GOOG": "Large-Cap-Tech", "META": "Large-Cap-Tech", "TSLA":  "Large-Cap-Tech",
+    "QCOM": "Large-Cap-Tech", "CSCO": "Large-Cap-Tech", "DELL":  "Large-Cap-Tech",
+    "BABA": "Large-Cap-Tech", "BIDU": "Large-Cap-Tech", "JD":    "Large-Cap-Tech",
+    # 2x / 3x leveraged ETF proxies on mega-cap names
+    "MSFU": "Large-Cap-Tech", "METU": "Large-Cap-Tech", "AMZU":  "Large-Cap-Tech",
+    "TQQQ": "Large-Cap-Tech", "QQQ":  "Large-Cap-Tech", "XLK":   "Large-Cap-Tech",
+    "SPY":  "Large-Cap-Tech", "SPXL": "Large-Cap-Tech",
+
+    # ── Software ─────────────────────────────────────────────────────────────
+    # SaaS, platforms, consumer-tech software, gaming, marketplaces
+    "UBER": "Software", "PATH":  "Software", "SPOT":  "Software",
+    "NFLX": "Software", "CRM":   "Software", "NOW":   "Software",
+    "ADBE": "Software", "INTU":  "Software", "WDAY":  "Software",
+    "CDNS": "Software", "SNPS":  "Software", "ANSS":  "Software",
+    "DOCU": "Software", "SHOP":  "Software", "ABNB":  "Software",
+    "DKNG": "Software", "RBLX":  "Software", "TTWO":  "Software",
+    "EA":   "Software", "SE":    "Software", "ZM":    "Software",
+    "LYFT": "Software", "DASH":  "Software", "GRAB":  "Software",
+    "U":    "Software", "MELI":  "Software", "BILL":  "Software",
+
+    # ── Fintech ──────────────────────────────────────────────────────────────
+    # Payments, lending, exchanges, alt-asset management, banks
+    "SOFI": "Fintech", "BN":    "Fintech", "PYPL":  "Fintech",
+    "SQ":   "Fintech", "COIN":  "Fintech", "AFRM":  "Fintech",
+    "V":    "Fintech", "MA":    "Fintech", "HOOD":  "Fintech",
+    "NU":   "Fintech", "UPST":  "Fintech", "MSTR":  "Fintech",
+    "SCHW": "Fintech", "IBKR":  "Fintech", "ICE":   "Fintech",
+    "CME":  "Fintech", "CBOE":  "Fintech", "FICO":  "Fintech",
+    "GS":   "Fintech", "JPM":   "Fintech", "MS":    "Fintech",
+    "BAC":  "Fintech", "WFC":   "Fintech", "C":     "Fintech",
+    "XLF":  "Fintech",
+
+    # ── Energy-Transition ────────────────────────────────────────────────────
+    # Storage, nuclear, uranium, solar, wind, grid, hydrogen, EVs (pure-play)
     "AMPX": "Energy-Transition", "TE":   "Energy-Transition", "LEU":  "Energy-Transition",
     "BE":   "Energy-Transition", "SHLS": "Energy-Transition", "NEXT": "Energy-Transition",
-    "FLNC": "Energy-Transition", "XLU":  "Energy-Transition",
-    # Defense-Space — aerospace, defense, satellite, dual-use
-    "RKLB": "Defense-Space", "KRKNF": "Defense-Space", "ONDS": "Defense-Space",
-    "PL":   "Defense-Space", "USAR":  "Defense-Space", "LMT":  "Defense-Space",
-    "RTX":  "Defense-Space", "NOC":   "Defense-Space", "GD":   "Defense-Space",
-    # Photonics — optical interconnect, lidar, photonic semiconductors
-    "FOTO": "Photonics", "AAOI": "Photonics", "LITE": "Photonics",
-    "COHR": "Photonics", "IIVI": "Photonics", "LASR": "Photonics",
-    # Cash — short-duration T-bill ETFs
+    "FLNC": "Energy-Transition", "XLU":  "Energy-Transition", "NEE":  "Energy-Transition",
+    "ENPH": "Energy-Transition", "SEDG": "Energy-Transition", "FSLR": "Energy-Transition",
+    "CEG":  "Energy-Transition", "VST":  "Energy-Transition", "CCJ":  "Energy-Transition",
+    "SMR":  "Energy-Transition", "OKLO": "Energy-Transition", "UUUU": "Energy-Transition",
+    "DNN":  "Energy-Transition", "PLUG": "Energy-Transition", "STEM": "Energy-Transition",
+    "RIVN": "Energy-Transition", "LCID": "Energy-Transition", "CSIQ": "Energy-Transition",
+    "RUN":  "Energy-Transition", "NOVA": "Energy-Transition", "ARRY": "Energy-Transition",
+    "BEP":  "Energy-Transition", "NEP":  "Energy-Transition", "CLNE": "Energy-Transition",
+    "XLE":  "Energy-Transition",
+
+    # ── Defense-Space ────────────────────────────────────────────────────────
+    # Aerospace, defense primes, satellites, eVTOL, dual-use
+    "RKLB": "Defense-Space", "KRKNF": "Defense-Space", "ONDS":  "Defense-Space",
+    "PL":   "Defense-Space", "USAR":  "Defense-Space", "LMT":   "Defense-Space",
+    "RTX":  "Defense-Space", "NOC":   "Defense-Space", "GD":    "Defense-Space",
+    "HII":  "Defense-Space", "KTOS":  "Defense-Space", "AVAV":  "Defense-Space",
+    "ASTS": "Defense-Space", "LUNR":  "Defense-Space", "BWXT":  "Defense-Space",
+    "LHX":  "Defense-Space", "HEI":   "Defense-Space", "TDG":   "Defense-Space",
+    "IRDM": "Defense-Space", "SPIR":  "Defense-Space", "RDW":   "Defense-Space",
+    "JOBY": "Defense-Space", "ACHR":  "Defense-Space", "MNTS":  "Defense-Space",
+    "BA":   "Defense-Space", "AXON":  "Defense-Space",
+
+    # ── Photonics ────────────────────────────────────────────────────────────
+    # Optical interconnect, fiber lasers, lidar, photonic semiconductors
+    "FOTO": "Photonics", "AAOI": "Photonics", "LITE":  "Photonics",
+    "COHR": "Photonics", "IIVI": "Photonics", "LASR":  "Photonics",
+    "IPGP": "Photonics", "CIEN": "Photonics", "VIAVI": "Photonics",
+    "MKSI": "Photonics", "NOVT": "Photonics", "OLED":  "Photonics",
+
+    # ── Cash ─────────────────────────────────────────────────────────────────
+    # Short-duration T-bill ETFs and money-market proxies
     "SGOV": "Cash", "SHV": "Cash", "BIL": "Cash", "TBIL": "Cash",
-    # Miscellaneous — consumer brands, speculative, does not fit above
-    "BROS": "Miscellaneous", "ONON": "Miscellaneous", "PURR": "Miscellaneous",
+    "USFR": "Cash", "VMFXX": "Cash",
+
+    # ── Miscellaneous ────────────────────────────────────────────────────────
+    # Consumer brands, speculative, meme, does not fit above
+    "BROS": "Miscellaneous", "ONON": "Miscellaneous", "PURR":  "Miscellaneous",
+    "AMC":  "Miscellaneous", "GME":  "Miscellaneous", "TLRY":  "Miscellaneous",
+    "F":    "Miscellaneous", "GM":   "Miscellaneous", "NIO":   "Miscellaneous",
+    "XPEV": "Miscellaneous", "LI":   "Miscellaneous", "SIRI":  "Miscellaneous",
 }
 
 
