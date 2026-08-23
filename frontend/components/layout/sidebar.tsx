@@ -7,6 +7,7 @@ const nav = [
   { href: '/briefing',  label: 'Daily Briefing', icon: '📋' },
   { href: '/analytics', label: 'Analytics',      icon: '📈' },
   { href: '/themes',    label: 'Themes',         icon: '🗂️' },
+  { href: '/thesis',    label: 'Thesis Builder', icon: '🎯' },
   { href: '/logs',      label: 'System Logs',    icon: '⚙️' },
 ]
 

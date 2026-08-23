@@ -55,4 +55,11 @@ export const api = {
     logs:         (lines = 200) => get<any>(`/system/logs?lines=${lines}`),
     bridgeStatus: ()            => get<any>('/system/bridge/status'),
   },
+  thesis: {
+    tickers:          ()                 => get<any[]>('/thesis/tickers'),
+    history:          (ticker: string)   => get<any[]>(`/thesis/${encodeURIComponent(ticker)}/history`),
+    run:              (id: number)       => get<any>(`/thesis/run/${id}`),
+    fetchFundamentals: (ticker: string)  => post(`/thesis/${encodeURIComponent(ticker)}/fetch`, {}),
+    generate:         (ticker: string, body: any) => post(`/thesis/${encodeURIComponent(ticker)}/generate`, body),
+  },
 }
