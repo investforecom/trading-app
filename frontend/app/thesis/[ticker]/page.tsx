@@ -388,8 +388,8 @@ function ThesisQaCard({ label, text, accent }: { label: string; text: string; ac
   )
 }
 
-function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf }: {
-  ticker: string; fundamentals: any; onBack: () => void; onSkipToDcf: () => void
+function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf, onThesisChange }: {
+  ticker: string; fundamentals: any; onBack: () => void; onSkipToDcf: () => void; onThesisChange: (qa: any) => void
 }) {
   const [qa, setQa] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -404,6 +404,8 @@ function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf }: {
     api.thesis.thesisQa(ticker).then(setQa).catch((e) => setError(String(e.message || e))).finally(() => setLoading(false))
     api.thesis.thesisQaHistory(ticker).then(setHistory).catch(() => setHistory([]))
   }, [ticker])
+
+  useEffect(() => { onThesisChange(qa) }, [qa])
 
   async function handleGenerate() {
     setGenerating(true)
@@ -558,7 +560,12 @@ function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf }: {
         <button onClick={onBack} className="px-4 py-2 rounded-lg text-sm font-medium bg-white/5 text-gray-400 hover:bg-white/10 transition-colors">
           ← Back to Quality Screen
         </button>
-        <button onClick={onSkipToDcf} className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors">
+        <button
+          onClick={onSkipToDcf}
+          disabled={!qa}
+          title={!qa ? 'Generate a thesis first' : undefined}
+          className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-blue-600/20"
+        >
           Continue to DCF →
         </button>
       </div>
@@ -583,6 +590,23 @@ function defaultScenarios(f: any): { bear: Scenario; base: Scenario; bull: Scena
     bear: { growth_start: Math.max(baseGrowth - 0.10, -0.05), growth_end: 0.02, fcf_margin: Math.max(fcfMargin - 0.08, 0.02), wacc: 0.11, terminal_growth: 0.02 },
     base: { growth_start: baseGrowth, growth_end: 0.05, fcf_margin: fcfMargin, wacc: 0.09, terminal_growth: 0.025 },
     bull: { growth_start: baseGrowth + 0.10, growth_end: 0.08, fcf_margin: Math.min(fcfMargin + 0.08, 0.5), wacc: 0.08, terminal_growth: 0.03 },
+  }
+}
+
+// Base case builds directly on the Thesis stage's growth call (growth_rate_pct
+// fading to normalized_growth_pct over growth_years); bear/bull are offsets
+// from it. DCF only has a revenue-growth lever, so this is applied as Y1
+// growth regardless of whether the thesis's growth_basis was Sales/FCF/Earnings.
+function defaultScenariosFromThesis(thesis: any, f: any): { years: number; bear: Scenario; base: Scenario; bull: Scenario } {
+  const baseGrowth = (thesis?.growth_rate_pct ?? 10) / 100
+  const terminalGrowth = (thesis?.normalized_growth_pct ?? 5) / 100
+  const years = thesis?.growth_years ?? 5
+  const fcfMargin = f?.revenue_ttm && f?.free_cashflow ? f.free_cashflow / f.revenue_ttm : 0.15
+  return {
+    years,
+    bear: { growth_start: Math.max(baseGrowth - 0.15, -0.05), growth_end: Math.max(terminalGrowth - 0.02, 0), fcf_margin: Math.max(fcfMargin - 0.08, 0.02), wacc: 0.11, terminal_growth: Math.max(terminalGrowth - 0.01, 0.015) },
+    base: { growth_start: baseGrowth, growth_end: terminalGrowth, fcf_margin: fcfMargin, wacc: 0.09, terminal_growth: terminalGrowth },
+    bull: { growth_start: baseGrowth + 0.15, growth_end: terminalGrowth + 0.02, fcf_margin: Math.min(fcfMargin + 0.08, 0.5), wacc: 0.08, terminal_growth: terminalGrowth + 0.01 },
   }
 }
 
@@ -661,9 +685,10 @@ function CommentaryCard({ label, text, color }: { label: string; text: string; c
   )
 }
 
-function DcfStage({ ticker, fundamentals, onBack }: { ticker: string; fundamentals: any; onBack: () => void }) {
-  const [scenarios, setScenarios] = useState(() => defaultScenarios(fundamentals))
-  const [years, setYears] = useState(5)
+function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fundamentals: any; thesis: any; onBack: () => void }) {
+  const initial = thesis ? defaultScenariosFromThesis(thesis, fundamentals) : { years: 5, ...defaultScenarios(fundamentals) }
+  const [scenarios, setScenarios] = useState({ bear: initial.bear, base: initial.base, bull: initial.bull })
+  const [years, setYears] = useState(initial.years)
   const [history, setHistory] = useState<any[]>([])
   const [viewingRun, setViewingRun] = useState<any>(null)
   const [generating, setGenerating] = useState(false)
@@ -701,6 +726,15 @@ function DcfStage({ ticker, fundamentals, onBack }: { ticker: string; fundamenta
   return (
     <div className="space-y-6">
       <button onClick={onBack} className="text-xs text-blue-400 hover:underline">← Back to Thesis</button>
+
+      {thesis && (
+        <div className="bg-card border border-border rounded-lg px-3 py-2 text-[10px] text-gray-500">
+          Base case prefilled from the Thesis: <span className="text-gray-300">{thesis.stage}</span> stage,{' '}
+          <span className="text-gray-300">{thesis.growth_rate_pct}% {thesis.growth_basis?.toLowerCase()}</span> growth for{' '}
+          <span className="text-gray-300">{thesis.growth_years} years</span>, normalizing to{' '}
+          <span className="text-gray-300">{thesis.normalized_growth_pct}%</span>. DCF growth inputs are always revenue-based — edit freely below.
+        </div>
+      )}
 
       <div>
         <div className="flex items-center justify-between mb-2">
@@ -857,6 +891,7 @@ export default function ThesisTickerPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [fundamentalsHistory, setFundamentalsHistory] = useState<any[]>([])
   const [viewingFundamentals, setViewingFundamentals] = useState<any>(null)
+  const [thesisQa, setThesisQa] = useState<any>(null)
   const [stage, setStage] = useState<Stage>('quality')
   const [unlocked, setUnlocked] = useState<Stage[]>(['quality'])
 
@@ -891,9 +926,12 @@ export default function ThesisTickerPage() {
   }
 
   function goTo(s: Stage) {
+    if (s === 'dcf' && !thesisQa) return  // DCF stays locked until a thesis exists — it prefills from it
     setUnlocked((prev) => (prev.includes(s) ? prev : [...prev, s]))
     setStage(s)
   }
+
+  const effectiveUnlocked = thesisQa ? unlocked : unlocked.filter((s) => s !== 'dcf')
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -928,7 +966,7 @@ export default function ThesisTickerPage() {
 
       {fundamentals && (
         <>
-          <StageStepper stage={stage} unlocked={unlocked} onSelect={goTo} />
+          <StageStepper stage={stage} unlocked={effectiveUnlocked} onSelect={goTo} />
 
           {stage === 'quality' && (
             <>
@@ -958,8 +996,16 @@ export default function ThesisTickerPage() {
               )}
             </>
           )}
-          {stage === 'thesis' && <ThesisStage ticker={ticker} fundamentals={fundamentals} onBack={() => goTo('quality')} onSkipToDcf={() => goTo('dcf')} />}
-          {stage === 'dcf' && <DcfStage ticker={ticker} fundamentals={fundamentals} onBack={() => goTo('thesis')} />}
+          {stage === 'thesis' && (
+            <ThesisStage
+              ticker={ticker}
+              fundamentals={fundamentals}
+              onBack={() => goTo('quality')}
+              onSkipToDcf={() => goTo('dcf')}
+              onThesisChange={setThesisQa}
+            />
+          )}
+          {stage === 'dcf' && <DcfStage ticker={ticker} fundamentals={fundamentals} thesis={thesisQa} onBack={() => goTo('thesis')} />}
         </>
       )}
     </div>
