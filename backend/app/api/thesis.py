@@ -1,5 +1,5 @@
 import json
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -14,22 +14,32 @@ router = APIRouter()
 
 OWNER_ID = 1
 
+# What fundamentals field backs each DCF driver's starting value.
+DRIVER_FIELD = {"fcf": "free_cashflow", "revenue": "revenue_ttm", "net_income": "net_income_ttm"}
+
 
 # ── Request bodies ──────────────────────────────────────────────────────────
 
 class ScenarioBody(BaseModel):
-    growth_start: float
-    growth_end: float
-    fcf_margin: float
-    wacc: float
-    terminal_growth: float
+    stage1_growth: float
+    stage1_decay: float
+    stage1_years: int
+    stage2_growth: float = 0
+    stage2_years: int = 0
+    terminal_growth: float = 0.025
+    terminal_method: Literal["gordon", "exit_multiple"] = "gordon"
+    exit_multiple: Optional[float] = None
+    discount_rate: float = 0.09
 
 
 class GenerateBody(BaseModel):
-    years: int = 5
+    driver: Literal["fcf", "revenue", "net_income"] = "fcf"
+    starting_value: Optional[float] = None
     shares_outstanding: Optional[float] = None
     net_debt: Optional[float] = None
-    revenue_ttm: Optional[float] = None
+    include_net_debt_bridge: bool = True
+    dilution_rate: float = 0
+    dilution_years: int = 0
     bear: ScenarioBody
     base: ScenarioBody
     bull: ScenarioBody
@@ -255,18 +265,22 @@ def generate(ticker: str, body: GenerateBody):
     except Exception as exc:
         raise HTTPException(400, str(exc))
 
-    revenue_ttm = body.revenue_ttm or fundamentals.get("revenue_ttm")
+    driver_field = DRIVER_FIELD[body.driver]
+    starting_value = body.starting_value or fundamentals.get(driver_field)
     shares = body.shares_outstanding or fundamentals.get("shares_outstanding")
     net_debt = body.net_debt if body.net_debt is not None else fundamentals.get("net_debt", 0)
 
-    if not revenue_ttm or not shares:
-        raise HTTPException(400, "Missing revenue_ttm or shares_outstanding — yfinance data incomplete, supply manually")
+    if not starting_value or not shares:
+        raise HTTPException(400, f"Missing {driver_field} or shares_outstanding — yfinance data incomplete, supply manually")
 
     dcf_inputs = DCFInputs(
-        revenue_ttm=revenue_ttm,
+        driver=body.driver,
+        starting_value=starting_value,
         shares_outstanding=shares,
         net_debt=net_debt,
-        years=body.years,
+        include_net_debt_bridge=body.include_net_debt_bridge,
+        dilution_rate=body.dilution_rate,
+        dilution_years=body.dilution_years,
         bear=ScenarioInputs(**body.bear.model_dump()),
         base=ScenarioInputs(**body.base.model_dump()),
         bull=ScenarioInputs(**body.bull.model_dump()),

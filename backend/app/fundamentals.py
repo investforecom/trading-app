@@ -50,6 +50,9 @@ def fetch_fundamentals(ticker: str) -> dict:
         "shares_outstanding": info.get("sharesOutstanding"),
         "beta": info.get("beta"),
 
+        # ── DCF driver inputs ────────────────────────────────────────────
+        "net_income_ttm": info.get("netIncomeToCommon"),
+
         # ── Reliability ──────────────────────────────────────────────────
         "revenue_ttm": revenue_ttm,
         "revenue_growth_yoy": info.get("revenueGrowth"),

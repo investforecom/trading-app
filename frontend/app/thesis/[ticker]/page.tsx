@@ -575,46 +575,75 @@ function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf, onThesisChange
 
 // ── DCF stage (existing scenario builder) ───────────────────────────────────
 
+type Driver = 'fcf' | 'revenue' | 'net_income'
+const DRIVER_FIELD: Record<Driver, string> = { fcf: 'free_cashflow', revenue: 'revenue_ttm', net_income: 'net_income_ttm' }
+const DRIVER_LABEL: Record<Driver, string> = { fcf: 'Free Cash Flow', revenue: 'Revenue', net_income: 'Net Income' }
+
 interface Scenario {
-  growth_start: number
-  growth_end: number
-  fcf_margin: number
-  wacc: number
+  stage1_growth: number
+  stage1_decay: number
+  stage1_years: number
+  stage2_growth: number
+  stage2_years: number
   terminal_growth: number
+  terminal_method: 'gordon' | 'exit_multiple'
+  exit_multiple: number | null
+  discount_rate: number
 }
 
-function defaultScenarios(f: any): { bear: Scenario; base: Scenario; bull: Scenario } {
+function defaultScenarios(f: any, driver: Driver): { bear: Scenario; base: Scenario; bull: Scenario } {
   const baseGrowth = f?.revenue_growth_yoy ?? 0.10
-  const fcfMargin = f?.revenue_ttm && f?.free_cashflow ? f.free_cashflow / f.revenue_ttm : 0.15
+  const isRevenue = driver === 'revenue'
+  const defaultMultiple = f?.peer_benchmark?.median_ps ?? 5
+  const mk = (growth: number, discountRate: number, terminalGrowth: number, multiple: number): Scenario => ({
+    stage1_growth: growth, stage1_decay: 0.02, stage1_years: 5, stage2_growth: 0, stage2_years: 0,
+    terminal_growth: Math.max(terminalGrowth, 0.01),
+    terminal_method: isRevenue ? 'exit_multiple' : 'gordon',
+    exit_multiple: isRevenue ? Math.max(multiple, 1) : null,
+    discount_rate: discountRate,
+  })
   return {
-    bear: { growth_start: Math.max(baseGrowth - 0.10, -0.05), growth_end: 0.02, fcf_margin: Math.max(fcfMargin - 0.08, 0.02), wacc: 0.11, terminal_growth: 0.02 },
-    base: { growth_start: baseGrowth, growth_end: 0.05, fcf_margin: fcfMargin, wacc: 0.09, terminal_growth: 0.025 },
-    bull: { growth_start: baseGrowth + 0.10, growth_end: 0.08, fcf_margin: Math.min(fcfMargin + 0.08, 0.5), wacc: 0.08, terminal_growth: 0.03 },
+    bear: mk(Math.max(baseGrowth - 0.10, -0.05), 0.11, 0.02, defaultMultiple - 3),
+    base: mk(baseGrowth, 0.09, 0.025, defaultMultiple),
+    bull: mk(baseGrowth + 0.10, 0.08, 0.03, defaultMultiple + 3),
   }
 }
 
-// Base case builds directly on the Thesis stage's growth call (growth_rate_pct
-// fading to normalized_growth_pct over growth_years); bear/bull are offsets
-// from it. DCF only has a revenue-growth lever, so this is applied as Y1
-// growth regardless of whether the thesis's growth_basis was Sales/FCF/Earnings.
-function defaultScenariosFromThesis(thesis: any, f: any): { years: number; bear: Scenario; base: Scenario; bull: Scenario } {
+// Builds directly on the Thesis stage's growth call: flat stage1_growth for
+// growth_years, then straight to terminal_growth = normalized_growth_pct (the
+// thesis text describes a flat rate stepping down to a normalized one, not a
+// gradual fade, so no decay/second stage here). Bear/bull are offsets from it.
+function defaultScenariosFromThesis(thesis: any, f: any, driver: Driver): { bear: Scenario; base: Scenario; bull: Scenario } {
   const baseGrowth = (thesis?.growth_rate_pct ?? 10) / 100
   const terminalGrowth = (thesis?.normalized_growth_pct ?? 5) / 100
   const years = thesis?.growth_years ?? 5
-  const fcfMargin = f?.revenue_ttm && f?.free_cashflow ? f.free_cashflow / f.revenue_ttm : 0.15
+  const isRevenue = driver === 'revenue'
+  const defaultMultiple = f?.peer_benchmark?.median_ps ?? 5
+
+  const mk = (growthDelta: number, discountRate: number, tgDelta: number, multipleDelta: number): Scenario => ({
+    stage1_growth: Math.max(baseGrowth + growthDelta, -0.05),
+    stage1_decay: 0,
+    stage1_years: years,
+    stage2_growth: 0,
+    stage2_years: 0,
+    terminal_growth: Math.max(terminalGrowth + tgDelta, 0.01),
+    terminal_method: isRevenue ? 'exit_multiple' : 'gordon',
+    exit_multiple: isRevenue ? Math.max(defaultMultiple + multipleDelta, 1) : null,
+    discount_rate: discountRate,
+  })
+
   return {
-    years,
-    bear: { growth_start: Math.max(baseGrowth - 0.15, -0.05), growth_end: Math.max(terminalGrowth - 0.02, 0), fcf_margin: Math.max(fcfMargin - 0.08, 0.02), wacc: 0.11, terminal_growth: Math.max(terminalGrowth - 0.01, 0.015) },
-    base: { growth_start: baseGrowth, growth_end: terminalGrowth, fcf_margin: fcfMargin, wacc: 0.09, terminal_growth: terminalGrowth },
-    bull: { growth_start: baseGrowth + 0.15, growth_end: terminalGrowth + 0.02, fcf_margin: Math.min(fcfMargin + 0.08, 0.5), wacc: 0.08, terminal_growth: terminalGrowth + 0.01 },
+    bear: mk(-0.15, 0.11, -0.01, -3),
+    base: mk(0, 0.09, 0, 0),
+    bull: mk(0.15, 0.08, 0.01, 3),
   }
 }
 
 function ScenarioForm({ label, color, value, onChange }: {
   label: string; color: string; value: Scenario; onChange: (s: Scenario) => void
 }) {
-  // Scenario values are stored as decimals (0.15) but edited as percentages (15).
-  const field = (key: keyof Scenario, fieldLabel: string, step = 0.5) => (
+  // Percent fields are stored as decimals (0.15) but edited as percentages (15).
+  const pct = (key: 'stage1_growth' | 'stage1_decay' | 'stage2_growth' | 'terminal_growth' | 'discount_rate', fieldLabel: string, step = 0.5) => (
     <label className="block">
       <span className="text-[10px] text-gray-600">{fieldLabel}</span>
       <div className="relative mt-0.5">
@@ -629,14 +658,44 @@ function ScenarioForm({ label, color, value, onChange }: {
       </div>
     </label>
   )
+  const int = (key: 'stage1_years' | 'stage2_years', fieldLabel: string) => (
+    <label className="block">
+      <span className="text-[10px] text-gray-600">{fieldLabel}</span>
+      <input
+        type="number" min={0} step={1}
+        value={value[key]}
+        onChange={(e) => onChange({ ...value, [key]: parseInt(e.target.value) || 0 })}
+        className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-100 mt-0.5 focus:outline-none focus:border-blue-500"
+      />
+    </label>
+  )
+  const multiple = () => (
+    <label className="block">
+      <span className="text-[10px] text-gray-600">Exit multiple</span>
+      <div className="relative mt-0.5">
+        <input
+          type="number" step={0.5} min={0}
+          value={value.exit_multiple ?? 0}
+          onChange={(e) => onChange({ ...value, exit_multiple: parseFloat(e.target.value) || 0 })}
+          className="w-full bg-surface border border-border rounded px-2 py-1 pr-5 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+        />
+        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-600 pointer-events-none">x</span>
+      </div>
+    </label>
+  )
+
   return (
     <div className="bg-card border border-border rounded-xl p-3 space-y-2" style={{ borderTopColor: color, borderTopWidth: 2 }}>
       <div className={`text-xs font-semibold ${color === '#f87171' ? 'text-red-400' : color === '#34d399' ? 'text-emerald-400' : 'text-gray-300'}`}>{label}</div>
-      {field('growth_start', 'Y1 growth')}
-      {field('growth_end', 'Growth by final year')}
-      {field('fcf_margin', 'FCF margin')}
-      {field('wacc', 'WACC')}
-      {field('terminal_growth', 'Terminal growth')}
+      <div className="grid grid-cols-2 gap-2">
+        {pct('stage1_growth', 'Stage 1 growth')}
+        {int('stage1_years', 'Stage 1 years')}
+        {pct('stage1_decay', 'Stage 1 decay (pp/yr)')}
+        {int('stage2_years', 'Stage 2 years (0=skip)')}
+      </div>
+      {value.stage2_years > 0 && pct('stage2_growth', 'Stage 2 growth')}
+      {value.terminal_method === 'gordon' ? pct('terminal_growth', 'Terminal growth') : multiple()}
+      {pct('discount_rate', 'Discount rate')}
     </div>
   )
 }
@@ -655,9 +714,9 @@ function SensitivityTable({ sens, current }: { sens: any; current: number | null
           </tr>
         </thead>
         <tbody>
-          {sens.wacc_axis.map((w: number, ri: number) => (
+          {sens.discount_rate_axis.map((r: number, ri: number) => (
             <tr key={ri}>
-              <td className="px-2 py-1 text-gray-500 whitespace-nowrap">WACC {fmtPct(w)}</td>
+              <td className="px-2 py-1 text-gray-500 whitespace-nowrap">Discount {fmtPct(r)}</td>
               {sens.grid[ri].map((price: number | null, ci: number) => (
                 <td key={ci} className={`px-2 py-1 text-center tabular-nums ${upsideColor(current, price)}`}>
                   {price != null ? fmtUsd(price, 0) : '—'}
@@ -689,10 +748,39 @@ function CommentaryCard({ label, text, color }: { label: string; text: string; c
   )
 }
 
+function DriverPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${active ? 'bg-blue-600/20 text-blue-400' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'}`}
+    >
+      {label}
+    </button>
+  )
+}
+
+function TerminalCrossCheck({ result }: { result: any }) {
+  if (!result) return null
+  const usingGordon = result.terminal_method_used === 'gordon'
+  return (
+    <div className="text-[10px] text-gray-600">
+      {usingGordon
+        ? `Gordon growth used — implies a ${result.implied_exit_multiple_from_gordon ?? '—'}x exit multiple`
+        : `${result.assumptions.exit_multiple}x exit multiple used — implies ${fmtPct(result.implied_perpetuity_growth_from_exit_multiple)} perpetuity growth`}
+    </div>
+  )
+}
+
 function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fundamentals: any; thesis: any; onBack: () => void }) {
-  const initial = thesis ? defaultScenariosFromThesis(thesis, fundamentals) : { years: 5, ...defaultScenarios(fundamentals) }
-  const [scenarios, setScenarios] = useState({ bear: initial.bear, base: initial.base, bull: initial.bull })
-  const [years, setYears] = useState(initial.years)
+  const [driver, setDriver] = useState<Driver>('fcf')
+  const [terminalMethod, setTerminalMethod] = useState<'gordon' | 'exit_multiple'>('gordon')
+  const [includeBridge, setIncludeBridge] = useState(true)
+  const [dilutionRate, setDilutionRate] = useState(0)  // %, e.g. 2 for 2%/yr
+  const [dilutionYears, setDilutionYears] = useState(0)
+
+  const buildDefaults = (d: Driver) => (thesis ? defaultScenariosFromThesis(thesis, fundamentals, d) : defaultScenarios(fundamentals, d))
+  const [scenarios, setScenarios] = useState<{ bear: Scenario; base: Scenario; bull: Scenario }>(() => buildDefaults('fcf'))
+
   const [history, setHistory] = useState<any[]>([])
   const [viewingRun, setViewingRun] = useState<any>(null)
   const [generating, setGenerating] = useState(false)
@@ -703,11 +791,34 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
     api.thesis.history(ticker).then(setHistory).catch(() => setHistory([]))
   }, [ticker])
 
+  function changeDriver(d: Driver) {
+    setDriver(d)
+    setTerminalMethod(d === 'revenue' ? 'exit_multiple' : 'gordon')
+    setIncludeBridge(d !== 'net_income')
+    setScenarios(buildDefaults(d))
+  }
+
+  function changeTerminalMethod(method: 'gordon' | 'exit_multiple') {
+    setTerminalMethod(method)
+    setScenarios((prev) => {
+      const apply = (s: Scenario): Scenario => ({ ...s, terminal_method: method, exit_multiple: method === 'exit_multiple' ? (s.exit_multiple ?? 15) : s.exit_multiple })
+      return { bear: apply(prev.bear), base: apply(prev.base), bull: apply(prev.bull) }
+    })
+  }
+
+  const startingValue = fundamentals?.[DRIVER_FIELD[driver]]
+
   async function handleGenerate() {
     setGenerating(true)
     setGenError(null)
     try {
-      const run = await api.thesis.generate(ticker, { years, bear: scenarios.bear, base: scenarios.base, bull: scenarios.bull })
+      const run = await api.thesis.generate(ticker, {
+        driver,
+        include_net_debt_bridge: includeBridge,
+        dilution_rate: dilutionRate / 100,
+        dilution_years: dilutionYears,
+        bear: scenarios.bear, base: scenarios.base, bull: scenarios.bull,
+      })
       setResult(run)
       setViewingRun(null)
       api.thesis.history(ticker).then(setHistory).catch(() => {})
@@ -736,22 +847,44 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
           Base case prefilled from the Thesis: <span className="text-gray-300">{thesis.stage}</span> stage,{' '}
           <span className="text-gray-300">{thesis.growth_rate_pct}% {thesis.growth_basis?.toLowerCase()}</span> growth for{' '}
           <span className="text-gray-300">{thesis.growth_years} years</span>, normalizing to{' '}
-          <span className="text-gray-300">{thesis.normalized_growth_pct}%</span>. DCF growth inputs are always revenue-based — edit freely below.
+          <span className="text-gray-300">{thesis.normalized_growth_pct}%</span>. Applied to whichever driver is selected below — edit freely.
         </div>
       )}
 
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-[10px] text-gray-600 uppercase tracking-wider">DCF Assumptions</h2>
-          <label className="text-[10px] text-gray-600 flex items-center gap-1.5">
-            Projection years
-            <input
-              type="number" min={3} max={10} value={years}
-              onChange={(e) => setYears(parseInt(e.target.value) || 5)}
-              className="w-14 bg-surface border border-border rounded px-1.5 py-0.5 text-xs text-gray-100"
-            />
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex gap-1.5">
+            <DriverPill label="FCF" active={driver === 'fcf'} onClick={() => changeDriver('fcf')} />
+            <DriverPill label="Revenue" active={driver === 'revenue'} onClick={() => changeDriver('revenue')} />
+            <DriverPill label="Net Income" active={driver === 'net_income'} onClick={() => changeDriver('net_income')} />
+          </div>
+          <div className="text-[10px] text-gray-600">
+            Starting {DRIVER_LABEL[driver]}: <span className="text-gray-300">{startingValue != null ? fmtBig(startingValue) : 'not available — enter manually'}</span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4 text-[10px] text-gray-600">
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={includeBridge} disabled={driver === 'net_income'} onChange={(e) => setIncludeBridge(e.target.checked)} />
+            Net debt bridge {driver === 'net_income' && '(n/a — net income is already equity-level)'}
+          </label>
+          <div className="flex items-center gap-1.5">
+            <span>Terminal method:</span>
+            <button onClick={() => changeTerminalMethod('gordon')} disabled={driver === 'revenue'} className={`px-2 py-0.5 rounded ${terminalMethod === 'gordon' ? 'bg-blue-600/20 text-blue-400' : 'text-gray-500 hover:text-gray-300'} disabled:opacity-30`}>Gordon growth</button>
+            <button onClick={() => changeTerminalMethod('exit_multiple')} className={`px-2 py-0.5 rounded ${terminalMethod === 'exit_multiple' ? 'bg-blue-600/20 text-blue-400' : 'text-gray-500 hover:text-gray-300'}`}>Exit multiple</button>
+          </div>
+          <label className="flex items-center gap-1.5">
+            Dilution
+            <input type="number" step={0.5} value={dilutionRate} onChange={(e) => setDilutionRate(parseFloat(e.target.value) || 0)} className="w-14 bg-surface border border-border rounded px-1.5 py-0.5 text-gray-100" />
+            % / yr for
+            <input type="number" step={1} min={0} value={dilutionYears} onChange={(e) => setDilutionYears(parseInt(e.target.value) || 0)} className="w-12 bg-surface border border-border rounded px-1.5 py-0.5 text-gray-100" />
+            years
           </label>
         </div>
+      </div>
+
+      <div>
+        <h2 className="text-[10px] text-gray-600 uppercase tracking-wider mb-2">DCF Assumptions</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <ScenarioForm label="Bear" color="#f87171" value={scenarios.bear} onChange={(s) => setScenarios({ ...scenarios, bear: s })} />
           <ScenarioForm label="Base" color="#9ca3af" value={scenarios.base} onChange={(s) => setScenarios({ ...scenarios, base: s })} />
@@ -786,6 +919,18 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
             <Stat label="Target Price" value={fmtUsd(displayed.target_price)} color={upsideColor(displayed.current_price, displayed.target_price)} bold />
           </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-center">
+            <TerminalCrossCheck result={displayedDcf.bear} />
+            <TerminalCrossCheck result={displayedDcf.base} />
+            <TerminalCrossCheck result={displayedDcf.bull} />
+          </div>
+
+          {displayedDcf.base?.diluted_shares && fundamentals?.shares_outstanding && (
+            <div className="text-[10px] text-gray-600 text-center">
+              Diluted shares at horizon: {(displayedDcf.base.diluted_shares / 1e6).toFixed(0)}M (from {(fundamentals.shares_outstanding / 1e6).toFixed(0)}M today)
+            </div>
+          )}
+
           {displayed.thesis_text && (
             <div className="bg-card border border-border rounded-xl p-4">
               <h3 className="text-xs font-semibold text-gray-300 mb-1.5">Thesis</h3>
@@ -817,7 +962,7 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
 
           {displayedDcf.sensitivity && (
             <div className="bg-card border border-border rounded-xl p-4">
-              <h3 className="text-xs font-semibold text-gray-300 mb-2">Sensitivity — Implied Price (Base Case)</h3>
+              <h3 className="text-xs font-semibold text-gray-300 mb-2">Sensitivity — Implied Price (Base Case, Gordon Growth)</h3>
               <SensitivityTable sens={displayedDcf.sensitivity} current={displayed.current_price} />
             </div>
           )}
