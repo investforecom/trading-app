@@ -43,6 +43,8 @@ class GenerateBody(BaseModel):
     bear: ScenarioBody
     base: ScenarioBody
     bull: ScenarioBody
+    name: Optional[str] = None
+    overwrite_run_id: Optional[int] = None
 
 
 # ── Fundamentals history ─────────────────────────────────────────────────────
@@ -137,7 +139,7 @@ def list_tickers():
 @router.get("/{ticker}/history")
 def history(ticker: str):
     return query("""
-        SELECT id, created_at, current_price, target_price,
+        SELECT id, created_at, current_price, target_price, name,
                fair_value_bear, fair_value_base, fair_value_bull
         FROM investment_theses
         WHERE owner_id = %s AND ticker = %s
@@ -258,10 +260,19 @@ def generate_thesis_qa_endpoint(ticker: str):
 def generate(ticker: str, body: GenerateBody):
     """
     Run the 3-scenario DCF against cached fundamentals, call Claude for the
-    written thesis + risks, and save the whole run as a new row (history is
-    never overwritten).
+    written thesis + risks, and save the run — as a new row by default, or
+    overwriting an existing one in place when overwrite_run_id is given
+    (e.g. tweaking a previously saved named scenario rather than
+    accumulating a new row for every small edit).
     """
     ticker = ticker.upper()
+    if body.overwrite_run_id is not None:
+        existing = query_one(
+            "SELECT id FROM investment_theses WHERE id = %s AND owner_id = %s AND ticker = %s",
+            (body.overwrite_run_id, OWNER_ID, ticker),
+        )
+        if not existing:
+            raise HTTPException(404, "Run to overwrite not found")
     try:
         fundamentals = _get_or_fetch_fundamentals(ticker)
     except Exception as exc:
@@ -301,21 +312,37 @@ def generate(ticker: str, body: GenerateBody):
     if missing:
         raise HTTPException(502, f"Thesis generation returned an incomplete response — missing {', '.join(missing)}")
 
-    row = query_one("""
-        INSERT INTO investment_theses (
-            owner_id, ticker, current_price,
-            fundamentals_json, dcf_inputs_json, dcf_outputs_json,
-            fair_value_bear, fair_value_base, fair_value_bull, target_price,
-            thesis_text, risks_json
-        ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-        ) RETURNING *
-    """, (
-        OWNER_ID, ticker, fundamentals.get("current_price"),
-        _json(fundamentals), _json(body.model_dump()), _json({**dcf_outputs, "scenario_commentary": ai_result["scenario_commentary"]}),
+    dcf_inputs_json = _json(body.model_dump(exclude={"overwrite_run_id", "name"}))
+    dcf_outputs_json = _json({**dcf_outputs, "scenario_commentary": ai_result["scenario_commentary"]})
+    common_params = (
+        fundamentals.get("current_price"),
+        _json(fundamentals), dcf_inputs_json, dcf_outputs_json,
         dcf_outputs["bear"]["implied_price"], dcf_outputs["base"]["implied_price"], dcf_outputs["bull"]["implied_price"],
-        ai_result["target_price"], ai_result["thesis_text"], _json(ai_result["top_risks"]),
-    ))
+        ai_result["target_price"], ai_result["thesis_text"], _json(ai_result["top_risks"]), body.name,
+    )
+
+    if body.overwrite_run_id is not None:
+        row = query_one("""
+            UPDATE investment_theses SET
+                created_at = now(), current_price = %s,
+                fundamentals_json = %s, dcf_inputs_json = %s, dcf_outputs_json = %s,
+                fair_value_bear = %s, fair_value_base = %s, fair_value_bull = %s, target_price = %s,
+                thesis_text = %s, risks_json = %s, name = %s
+            WHERE id = %s AND owner_id = %s
+            RETURNING *
+        """, common_params + (body.overwrite_run_id, OWNER_ID))
+    else:
+        row = query_one("""
+            INSERT INTO investment_theses (
+                current_price,
+                fundamentals_json, dcf_inputs_json, dcf_outputs_json,
+                fair_value_bear, fair_value_base, fair_value_bull, target_price,
+                thesis_text, risks_json, name,
+                owner_id, ticker
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            ) RETURNING *
+        """, common_params + (OWNER_ID, ticker))
     return row
 
 

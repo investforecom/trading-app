@@ -1006,6 +1006,8 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
 
   const [history, setHistory] = useState<any[]>([])
   const [viewingRun, setViewingRun] = useState<any>(null)
+  const [basedOnRunId, setBasedOnRunId] = useState<number | null>(null)
+  const [runName, setRunName] = useState('')
   const [savedThesis, setSavedThesis] = useState<any>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -1018,6 +1020,7 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
   }, [ticker])
 
   function changeDriver(d: Driver) {
+    setViewingRun(null)
     setDriver(d)
     setTerminalMethod(d === 'revenue' ? 'exit_multiple' : 'gordon')
     setIncludeBridge(d !== 'net_income')
@@ -1025,6 +1028,7 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
   }
 
   function changeTerminalMethod(method: 'gordon' | 'exit_multiple') {
+    setViewingRun(null)
     setTerminalMethod(method)
     setScenarios((prev) => {
       const apply = (s: Scenario): Scenario => ({ ...s, terminal_method: method, exit_multiple: method === 'exit_multiple' ? (s.exit_multiple ?? 15) : s.exit_multiple })
@@ -1044,7 +1048,7 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
 
   const hasError = liveResult && (liveResult.bear.error || liveResult.base.error || liveResult.bull.error)
 
-  async function handleSave() {
+  async function handleSave(overwrite: boolean) {
     setSaving(true)
     setSaveError(null)
     try {
@@ -1054,6 +1058,8 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
         dilution_rate: dilutionRate / 100,
         dilution_years: dilutionYears,
         bear: scenarios.bear, base: scenarios.base, bull: scenarios.bull,
+        name: runName.trim() || null,
+        overwrite_run_id: overwrite ? basedOnRunId : null,
       })
       setSavedThesis({
         thesis_text: run.thesis_text,
@@ -1062,6 +1068,8 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
         target_price: run.target_price,
         created_at: run.created_at,
       })
+      setBasedOnRunId(run.id)
+      setRunName(run.name ?? '')
       setViewingRun(null)
       api.thesis.history(ticker).then(setHistory).catch(() => {})
     } catch (e: any) {
@@ -1071,9 +1079,24 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
     }
   }
 
+  // Loading a saved run also seeds the live assumption state from it (not
+  // just the displayed output) — so editing any input from here continues
+  // dynamically from exactly the numbers that were saved, instead of
+  // silently diverging from a frozen snapshot.
   async function loadRun(id: number) {
     const run = await api.thesis.run(id)
     setViewingRun(run)
+    setBasedOnRunId(run.id)
+    setRunName(run.name ?? '')
+    const inputs = run.dcf_inputs_json
+    if (inputs) {
+      setDriver(inputs.driver)
+      setTerminalMethod(inputs.base?.terminal_method ?? 'gordon')
+      setIncludeBridge(inputs.include_net_debt_bridge)
+      setDilutionRate((inputs.dilution_rate ?? 0) * 100)
+      setDilutionYears(inputs.dilution_years ?? 0)
+      setScenarios({ bear: inputs.bear, base: inputs.base, bull: inputs.bull })
+    }
   }
 
   // Normalize live vs. historical into one shape so the results section below
@@ -1159,7 +1182,7 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
 
         <div className="flex flex-wrap items-center gap-4 text-[10px] text-gray-600">
           <label className="flex items-center gap-1.5">
-            <input type="checkbox" checked={includeBridge} disabled={driver === 'net_income'} onChange={(e) => setIncludeBridge(e.target.checked)} />
+            <input type="checkbox" checked={includeBridge} disabled={driver === 'net_income'} onChange={(e) => { setViewingRun(null); setIncludeBridge(e.target.checked) }} />
             Net debt bridge {driver === 'net_income' && '(n/a — net income is already equity-level)'}
           </label>
           <div className="flex items-center gap-1.5">
@@ -1169,9 +1192,9 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
           </div>
           <label className="flex items-center gap-1.5">
             Dilution
-            <input type="number" step={0.5} value={dilutionRate} onChange={(e) => setDilutionRate(parseFloat(e.target.value) || 0)} className="w-14 bg-surface border border-border rounded px-1.5 py-0.5 text-gray-100" />
+            <input type="number" step={0.5} value={dilutionRate} onChange={(e) => { setViewingRun(null); setDilutionRate(parseFloat(e.target.value) || 0) }} className="w-14 bg-surface border border-border rounded px-1.5 py-0.5 text-gray-100" />
             % / yr for
-            <input type="number" step={1} min={0} value={dilutionYears} onChange={(e) => setDilutionYears(parseInt(e.target.value) || 0)} className="w-12 bg-surface border border-border rounded px-1.5 py-0.5 text-gray-100" />
+            <input type="number" step={1} min={0} value={dilutionYears} onChange={(e) => { setViewingRun(null); setDilutionYears(parseInt(e.target.value) || 0) }} className="w-12 bg-surface border border-border rounded px-1.5 py-0.5 text-gray-100" />
             years
           </label>
         </div>
@@ -1180,9 +1203,9 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
       <div>
         <h2 className="text-[10px] text-gray-600 uppercase tracking-wider mb-2">DCF Assumptions</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <ScenarioForm label="Bear" color="#f87171" value={scenarios.bear} onChange={(s) => setScenarios({ ...scenarios, bear: s })} />
-          <ScenarioForm label="Base" color="#9ca3af" value={scenarios.base} onChange={(s) => setScenarios({ ...scenarios, base: s })} />
-          <ScenarioForm label="Bull" color="#34d399" value={scenarios.bull} onChange={(s) => setScenarios({ ...scenarios, bull: s })} />
+          <ScenarioForm label="Bear" color="#f87171" value={scenarios.bear} onChange={(s) => { setViewingRun(null); setScenarios({ ...scenarios, bear: s }) }} />
+          <ScenarioForm label="Base" color="#9ca3af" value={scenarios.base} onChange={(s) => { setViewingRun(null); setScenarios({ ...scenarios, base: s }) }} />
+          <ScenarioForm label="Bull" color="#34d399" value={scenarios.bull} onChange={(s) => { setViewingRun(null); setScenarios({ ...scenarios, bull: s }) }} />
         </div>
       </div>
 
@@ -1194,10 +1217,10 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-[10px] text-gray-600 uppercase tracking-wider">
-              {viewingRun ? `Saved run · ${new Date(viewingRun.created_at).toLocaleString()}` : 'Live — updates as you edit assumptions'}
+              {viewingRun ? `Saved run${viewingRun.name ? ` · ${viewingRun.name}` : ''} · ${new Date(viewingRun.created_at).toLocaleString()}` : 'Live — updates as you edit assumptions'}
             </h2>
             {viewingRun && (
-              <button onClick={() => setViewingRun(null)} className="text-[10px] text-blue-400 hover:underline">Back to current</button>
+              <button onClick={() => setViewingRun(null)} className="text-[10px] text-blue-400 hover:underline">Edit these assumptions</button>
             )}
           </div>
 
@@ -1248,15 +1271,39 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
           </div>
 
           {!viewingRun && (
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleSave}
-                disabled={saving || !!hasError}
-                className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors disabled:opacity-40"
-              >
-                {saving ? 'Saving…' : 'Save & Write Thesis'}
-              </button>
-              <span className="text-[10px] text-gray-600">Persists this run to history and writes the narrative, risks, and target price below.</span>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={runName}
+                  onChange={(e) => setRunName(e.target.value)}
+                  placeholder="Scenario name (optional) — e.g. 'Bear case China ban'"
+                  className="flex-1 max-w-xs bg-surface border border-border rounded-lg px-2.5 py-1.5 text-xs text-gray-100 placeholder:text-gray-600 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => handleSave(false)}
+                  disabled={saving || !!hasError}
+                  className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors disabled:opacity-40"
+                >
+                  {saving ? 'Saving…' : 'Save as New Scenario'}
+                </button>
+                {basedOnRunId != null && (
+                  <button
+                    onClick={() => handleSave(true)}
+                    disabled={saving || !!hasError}
+                    className="px-4 py-2 rounded-lg text-sm font-medium bg-white/5 text-gray-300 hover:bg-white/10 transition-colors disabled:opacity-40"
+                  >
+                    {saving ? 'Saving…' : 'Update Saved Run'}
+                  </button>
+                )}
+              </div>
+              <p className="text-[10px] text-gray-600">
+                {basedOnRunId != null
+                  ? 'Save as New keeps the run you started from untouched; Update overwrites it with these numbers.'
+                  : 'Persists this run to history and writes the narrative, risks, and target price below.'}
+              </p>
             </div>
           )}
           {saveError && <p className="text-xs text-red-400">{saveError}</p>}
@@ -1314,9 +1361,12 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
               <button
                 key={h.id}
                 onClick={() => loadRun(h.id)}
-                className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/5 transition-colors text-left"
+                className={`w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/5 transition-colors text-left ${h.id === basedOnRunId ? 'bg-blue-600/10' : ''}`}
               >
-                <span className="text-xs text-gray-400">{new Date(h.created_at).toLocaleString()}</span>
+                <span className="text-xs text-gray-400">
+                  {h.name && <span className="text-gray-200 font-medium">{h.name} · </span>}
+                  {new Date(h.created_at).toLocaleString()}
+                </span>
                 <span className="text-xs text-gray-300 tabular-nums">
                   Base FV {fmtUsd(h.fair_value_base)} · Price then {fmtUsd(h.current_price)}
                 </span>
