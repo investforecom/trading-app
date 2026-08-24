@@ -800,8 +800,8 @@ function ScenarioForm({ label, color, value, onChange }: {
 
       {group('Stage 2', (
         <div className={value.stage2_years > 0 ? 'grid grid-cols-2 gap-2' : undefined}>
-          {int('stage2_years', 'Years (0 = skip)')}
           {value.stage2_years > 0 && pct('stage2_growth', 'Growth')}
+          {int('stage2_years', 'Years (0 = skip)')}
         </div>
       ))}
 
