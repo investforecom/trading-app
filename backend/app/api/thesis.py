@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.db import query, query_one, execute
+from app.db import query, query_one
 from app.fundamentals import fetch_fundamentals, search_tickers
 from app.dcf import DCFInputs, ScenarioInputs, run_dcf
 from app.thesis_ai import generate_thesis
@@ -35,62 +35,69 @@ class GenerateBody(BaseModel):
     bull: ScenarioBody
 
 
-# ── Fundamentals cache ───────────────────────────────────────────────────────
-# "Current state" cache, one row per ticker — never re-pulled from yfinance
-# unless the user explicitly hits Refresh Data.
+# ── Fundamentals history ─────────────────────────────────────────────────────
+# Append-only, like investment_theses — every fetch is a new row. "Current"
+# is just the latest one, so nothing is re-pulled from yfinance unless the
+# user explicitly hits Refresh Data, but every past pull stays revisitable.
 
-def _load_fundamentals_cache(ticker: str) -> dict | None:
+def _latest_fundamentals(ticker: str) -> dict | None:
     row = query_one("""
-        SELECT data_json, fetched_at FROM ticker_fundamentals_cache
+        SELECT id, data_json, fetched_at FROM ticker_fundamentals_snapshots
         WHERE owner_id = %s AND ticker = %s
+        ORDER BY fetched_at DESC LIMIT 1
     """, (OWNER_ID, ticker))
     if not row:
         return None
-    return {**row["data_json"], "_cached_at": row["fetched_at"].isoformat()}
+    return {**row["data_json"], "_snapshot_id": row["id"], "_cached_at": row["fetched_at"].isoformat()}
 
 
-def _save_fundamentals_cache(ticker: str, data: dict) -> None:
-    execute("""
-        INSERT INTO ticker_fundamentals_cache (owner_id, ticker, fetched_at, data_json)
-        VALUES (%s, %s, now(), %s)
-        ON CONFLICT (owner_id, ticker) DO UPDATE SET
-            fetched_at = now(), data_json = EXCLUDED.data_json
-    """, (OWNER_ID, ticker, _json(data)))
+def _insert_fundamentals_snapshot(ticker: str, data: dict) -> dict:
+    row = query_one("""
+        INSERT INTO ticker_fundamentals_snapshots (owner_id, ticker, current_price, data_json)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id, fetched_at
+    """, (OWNER_ID, ticker, data.get("current_price"), _json(data)))
+    return {**data, "_snapshot_id": row["id"], "_cached_at": row["fetched_at"].isoformat()}
 
 
 def _get_or_fetch_fundamentals(ticker: str) -> dict:
-    """Cache-first fundamentals lookup — fetches from yfinance only on a cache miss."""
-    cached = _load_fundamentals_cache(ticker)
-    if cached:
-        return cached
-    data = fetch_fundamentals(ticker)
-    _save_fundamentals_cache(ticker, data)
-    return {**data, "_cached_at": None}
+    """Cache-first fundamentals lookup — fetches from yfinance only when no snapshot exists yet."""
+    latest = _latest_fundamentals(ticker)
+    if latest:
+        return latest
+    return _insert_fundamentals_snapshot(ticker, fetch_fundamentals(ticker))
 
 
-# ── Thesis (business Q&A) cache ─────────────────────────────────────────────
+# ── Thesis (business Q&A) history ────────────────────────────────────────────
 
-def _load_thesis_cache(ticker: str) -> dict | None:
+def _latest_thesis_qa(ticker: str) -> dict | None:
     row = query_one("""
-        SELECT data_json, generated_at, based_on_fetched_at FROM ticker_thesis_cache
+        SELECT id, data_json, generated_at, based_on_fetched_at FROM ticker_thesis_snapshots
         WHERE owner_id = %s AND ticker = %s
+        ORDER BY generated_at DESC LIMIT 1
     """, (OWNER_ID, ticker))
     if not row:
         return None
     return {
         **row["data_json"],
+        "_snapshot_id": row["id"],
         "_generated_at": row["generated_at"].isoformat(),
         "_based_on_fetched_at": row["based_on_fetched_at"].isoformat() if row["based_on_fetched_at"] else None,
     }
 
 
-def _save_thesis_cache(ticker: str, data: dict, based_on_fetched_at: str | None) -> None:
-    execute("""
-        INSERT INTO ticker_thesis_cache (owner_id, ticker, generated_at, based_on_fetched_at, data_json)
-        VALUES (%s, %s, now(), %s, %s)
-        ON CONFLICT (owner_id, ticker) DO UPDATE SET
-            generated_at = now(), based_on_fetched_at = EXCLUDED.based_on_fetched_at, data_json = EXCLUDED.data_json
+def _insert_thesis_snapshot(ticker: str, data: dict, based_on_fetched_at: str | None) -> dict:
+    row = query_one("""
+        INSERT INTO ticker_thesis_snapshots (owner_id, ticker, based_on_fetched_at, data_json)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id, generated_at
     """, (OWNER_ID, ticker, based_on_fetched_at, _json(data)))
+    return {
+        **data,
+        "_snapshot_id": row["id"],
+        "_generated_at": row["generated_at"].isoformat(),
+        "_based_on_fetched_at": based_on_fetched_at,
+    }
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -150,31 +157,76 @@ def get_fundamentals(ticker: str):
 
 @router.post("/{ticker}/fetch")
 def fetch(ticker: str):
-    """Force a live re-pull from yfinance, bypassing the cache — the Refresh Data button."""
+    """Force a live re-pull from yfinance — the Refresh Data button. Always adds a new snapshot."""
     ticker = ticker.upper()
     try:
         data = fetch_fundamentals(ticker)
     except Exception as exc:
         raise HTTPException(400, str(exc))
-    _save_fundamentals_cache(ticker, data)
-    return {**data, "_cached_at": None}
+    return _insert_fundamentals_snapshot(ticker, data)
+
+
+@router.get("/{ticker}/fundamentals/history")
+def fundamentals_history(ticker: str):
+    return query("""
+        SELECT id, fetched_at, current_price FROM ticker_fundamentals_snapshots
+        WHERE owner_id = %s AND ticker = %s
+        ORDER BY fetched_at DESC
+    """, (OWNER_ID, ticker.upper()))
+
+
+@router.get("/{ticker}/fundamentals/snapshot/{snapshot_id}")
+def fundamentals_snapshot(ticker: str, snapshot_id: int):
+    row = query_one("""
+        SELECT data_json, fetched_at FROM ticker_fundamentals_snapshots
+        WHERE id = %s AND owner_id = %s AND ticker = %s
+    """, (snapshot_id, OWNER_ID, ticker.upper()))
+    if not row:
+        raise HTTPException(404, "Fundamentals snapshot not found")
+    return {**row["data_json"], "_snapshot_id": snapshot_id, "_cached_at": row["fetched_at"].isoformat()}
 
 
 @router.get("/{ticker}/thesis-qa")
 def get_thesis_qa(ticker: str):
     """Cache-first Thesis stage read. 404 if nothing has been generated yet."""
-    cached = _load_thesis_cache(ticker.upper())
-    if not cached:
+    latest = _latest_thesis_qa(ticker.upper())
+    if not latest:
         raise HTTPException(404, "No thesis generated yet")
-    return cached
+    return latest
+
+
+@router.get("/{ticker}/thesis-qa/history")
+def thesis_qa_history(ticker: str):
+    return query("""
+        SELECT id, generated_at, data_json->>'stage' AS stage, data_json->>'thesis_text' AS thesis_text
+        FROM ticker_thesis_snapshots
+        WHERE owner_id = %s AND ticker = %s
+        ORDER BY generated_at DESC
+    """, (OWNER_ID, ticker.upper()))
+
+
+@router.get("/{ticker}/thesis-qa/snapshot/{snapshot_id}")
+def thesis_qa_snapshot(ticker: str, snapshot_id: int):
+    row = query_one("""
+        SELECT data_json, generated_at, based_on_fetched_at FROM ticker_thesis_snapshots
+        WHERE id = %s AND owner_id = %s AND ticker = %s
+    """, (snapshot_id, OWNER_ID, ticker.upper()))
+    if not row:
+        raise HTTPException(404, "Thesis snapshot not found")
+    return {
+        **row["data_json"],
+        "_snapshot_id": snapshot_id,
+        "_generated_at": row["generated_at"].isoformat(),
+        "_based_on_fetched_at": row["based_on_fetched_at"].isoformat() if row["based_on_fetched_at"] else None,
+    }
 
 
 @router.post("/{ticker}/thesis-qa/generate")
 def generate_thesis_qa_endpoint(ticker: str):
     """
     Answer the business questions and produce the 2-line growth thesis,
-    grounded in the cached (or freshly fetched) fundamentals. Overwrites the
-    cached thesis — this is a "current state", not history like DCF runs.
+    grounded in the cached (or freshly fetched) fundamentals. Always adds a
+    new snapshot — past theses stay revisitable, same as DCF runs.
     """
     ticker = ticker.upper()
     try:
@@ -187,12 +239,7 @@ def generate_thesis_qa_endpoint(ticker: str):
     except Exception as exc:
         raise HTTPException(502, f"Thesis generation failed: {exc}")
 
-    _save_thesis_cache(ticker, qa, fundamentals.get("_cached_at"))
-    return {
-        **qa,
-        "_generated_at": None,
-        "_based_on_fetched_at": fundamentals.get("_cached_at"),
-    }
+    return _insert_thesis_snapshot(ticker, qa, fundamentals.get("_cached_at"))
 
 
 @router.post("/{ticker}/generate")

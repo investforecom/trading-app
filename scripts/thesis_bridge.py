@@ -58,8 +58,13 @@ no text before or after the fence:
   "growth_years": 5,
   "normalized_growth_pct": 6,
   "thesis_text": "Exactly 2 sentences: (1) 'The business is in the <Stage> stage and should compound <growth_basis> at roughly <growth_rate_pct>% annually for the next <growth_years> years before normalizing to <normalized_growth_pct>%.' (2) One sentence on the core justification.",
+  "main_risks": [{"title": "short risk label, max 8 words", "detail": "1-2 sentences justifying it against the specific numbers or narrative above — not generic market risk"}],
+  "catalysts": [{"title": "short catalyst label, max 8 words", "timing": "e.g. 'Q2 FY27 earnings, Aug 26 2026' or 'Ongoing' or 'Next 6-12 months' — be as specific as the evidence allows", "detail": "1-2 sentences on what happens and why it matters to this thesis"}],
   "sources_used": ["short label per web search source actually used, e.g. 'Q2 FY26 10-Q' — empty array if none used"]
 }
+main_risks must have 3-5 items, catalysts must have 2-4 items. Use web search for catalysts \
+that need a specific date (next earnings, product launch, regulatory decision) when the \
+fundamentals alone don't give one.
 """
 
 DCF_THESIS_SYSTEM = """You are an equity research analyst building an investment thesis for a \

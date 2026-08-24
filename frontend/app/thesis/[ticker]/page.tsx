@@ -395,10 +395,14 @@ function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf }: {
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [history, setHistory] = useState<any[]>([])
+  const [viewingSnapshot, setViewingSnapshot] = useState<any>(null)
 
   useEffect(() => {
     setLoading(true)
+    setViewingSnapshot(null)
     api.thesis.thesisQa(ticker).then(setQa).catch((e) => setError(String(e.message || e))).finally(() => setLoading(false))
+    api.thesis.thesisQaHistory(ticker).then(setHistory).catch(() => setHistory([]))
   }, [ticker])
 
   async function handleGenerate() {
@@ -407,6 +411,8 @@ function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf }: {
     try {
       const result = await api.thesis.generateThesisQa(ticker)
       setQa(result)
+      setViewingSnapshot(null)
+      api.thesis.thesisQaHistory(ticker).then(setHistory).catch(() => {})
     } catch (e: any) {
       setError(String(e.message || e))
     } finally {
@@ -414,6 +420,12 @@ function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf }: {
     }
   }
 
+  async function loadSnapshot(id: number) {
+    const snap = await api.thesis.thesisQaSnapshot(ticker, id)
+    setViewingSnapshot(snap)
+  }
+
+  const displayed = viewingSnapshot ?? qa
   const stale = qa?._based_on_fetched_at && fundamentals?._cached_at && qa._based_on_fetched_at < fundamentals._cached_at
 
   return (
@@ -440,23 +452,27 @@ function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf }: {
 
       {error && <p className="text-xs text-red-400">{error}</p>}
 
-      {qa && (
+      {displayed && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded ${STAGE_BADGE_COLOR[qa.stage] ?? 'text-gray-400 bg-gray-400/10'}`}>
-                {qa.stage}
+              <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded ${STAGE_BADGE_COLOR[displayed.stage] ?? 'text-gray-400 bg-gray-400/10'}`}>
+                {displayed.stage}
               </span>
-              {qa._generated_at && (
-                <span className="text-[10px] text-gray-600">Generated {new Date(qa._generated_at).toLocaleString()}</span>
-              )}
+              <span className="text-[10px] text-gray-600">
+                {viewingSnapshot ? `Snapshot from ${new Date(viewingSnapshot._generated_at).toLocaleString()}` : displayed._generated_at ? `Generated ${new Date(displayed._generated_at).toLocaleString()}` : null}
+              </span>
             </div>
-            <button onClick={handleGenerate} disabled={generating} className="text-[10px] text-blue-400 hover:underline disabled:opacity-40">
-              {generating ? 'Regenerating…' : 'Regenerate'}
-            </button>
+            {viewingSnapshot ? (
+              <button onClick={() => setViewingSnapshot(null)} className="text-[10px] text-blue-400 hover:underline">Back to current</button>
+            ) : (
+              <button onClick={handleGenerate} disabled={generating} className="text-[10px] text-blue-400 hover:underline disabled:opacity-40">
+                {generating ? 'Regenerating…' : 'Regenerate'}
+              </button>
+            )}
           </div>
 
-          {stale && (
+          {!viewingSnapshot && stale && (
             <div className="bg-yellow-950/20 border border-yellow-900/50 rounded-lg px-3 py-2 text-[10px] text-yellow-500">
               Fundamentals were refreshed after this thesis was generated — consider regenerating.
             </div>
@@ -464,30 +480,77 @@ function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf }: {
 
           <div className="bg-card border border-border rounded-xl p-4">
             <h3 className="text-xs font-semibold text-gray-300 mb-1.5">Thesis</h3>
-            <p className="text-sm text-gray-100 leading-relaxed">{qa.thesis_text}</p>
-            <p className="text-[10px] text-gray-600 mt-2">{qa.stage_reason}</p>
+            <p className="text-sm text-gray-100 leading-relaxed">{displayed.thesis_text}</p>
+            <p className="text-[10px] text-gray-600 mt-2">{displayed.stage_reason}</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <ThesisQaCard label="What is the demand?" text={qa.demand} accent="#3b82f6" />
-            <ThesisQaCard label="What is the moat?" text={qa.moat} accent="#a78bfa" />
+            <ThesisQaCard label="What is the demand?" text={displayed.demand} accent="#3b82f6" />
+            <ThesisQaCard label="What is the moat?" text={displayed.moat} accent="#a78bfa" />
             <div className="bg-card border border-border rounded-xl p-4" style={{ borderLeftColor: '#f59e0b', borderLeftWidth: 2 }}>
               <h4 className="text-xs font-semibold text-gray-300 mb-1.5">
-                Is the moat widening or narrowing? <span className={`font-bold ${MOAT_TREND_COLOR[qa.moat_trend] ?? 'text-gray-400'}`}>{qa.moat_trend}</span>
+                Is the moat widening or narrowing? <span className={`font-bold ${MOAT_TREND_COLOR[displayed.moat_trend] ?? 'text-gray-400'}`}>{displayed.moat_trend}</span>
               </h4>
-              <p className="text-sm text-gray-400 leading-relaxed">{qa.moat_trend_reason}</p>
+              <p className="text-sm text-gray-400 leading-relaxed">{displayed.moat_trend_reason}</p>
             </div>
-            <div className="bg-card border border-border rounded-xl p-4" style={{ borderLeftColor: qa.numbers_support_story ? '#34d399' : '#f87171', borderLeftWidth: 2 }}>
+            <div className="bg-card border border-border rounded-xl p-4" style={{ borderLeftColor: displayed.numbers_support_story ? '#34d399' : '#f87171', borderLeftWidth: 2 }}>
               <h4 className="text-xs font-semibold text-gray-300 mb-1.5">
-                Do the numbers complete the story? <span className={qa.numbers_support_story ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{qa.numbers_support_story ? 'Yes' : 'No'}</span>
+                Do the numbers complete the story? <span className={displayed.numbers_support_story ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{displayed.numbers_support_story ? 'Yes' : 'No'}</span>
               </h4>
-              <p className="text-sm text-gray-400 leading-relaxed">{qa.numbers_support_reason}</p>
+              <p className="text-sm text-gray-400 leading-relaxed">{displayed.numbers_support_reason}</p>
             </div>
           </div>
 
-          {qa.sources_used?.length > 0 && (
-            <div className="text-[10px] text-gray-600">Additional sources: {qa.sources_used.join(', ')}</div>
+          {displayed.main_risks?.length > 0 && (
+            <div className="bg-card border border-border rounded-xl p-4" style={{ borderTopColor: '#f87171', borderTopWidth: 2 }}>
+              <h3 className="text-xs font-semibold text-gray-300 mb-2">Main Risks</h3>
+              <ul className="space-y-2">
+                {displayed.main_risks.map((r: any, i: number) => (
+                  <li key={i} className="text-sm">
+                    <span className="text-red-400 font-medium">{r.title}</span>
+                    <span className="text-gray-400"> — {r.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
+
+          {displayed.catalysts?.length > 0 && (
+            <div className="bg-card border border-border rounded-xl p-4" style={{ borderTopColor: '#38bdf8', borderTopWidth: 2 }}>
+              <h3 className="text-xs font-semibold text-gray-300 mb-2">Catalysts / Events</h3>
+              <ul className="space-y-2">
+                {displayed.catalysts.map((c: any, i: number) => (
+                  <li key={i} className="text-sm">
+                    <span className="text-sky-400 font-medium">{c.title}</span>
+                    {c.timing && <span className="text-[10px] text-gray-600 ml-2">{c.timing}</span>}
+                    <div className="text-gray-400">{c.detail}</div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {displayed.sources_used?.length > 0 && (
+            <div className="text-[10px] text-gray-600">Additional sources: {displayed.sources_used.join(', ')}</div>
+          )}
+        </div>
+      )}
+
+      {history.length > 1 && (
+        <div>
+          <h2 className="text-[10px] text-gray-600 uppercase tracking-wider mb-2">History</h2>
+          <div className="bg-card border border-border rounded-xl overflow-hidden divide-y divide-border/50">
+            {history.map((h) => (
+              <button
+                key={h.id}
+                onClick={() => loadSnapshot(h.id)}
+                className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/5 transition-colors text-left"
+              >
+                <span className="text-xs text-gray-400">{new Date(h.generated_at).toLocaleString()}</span>
+                <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded ${STAGE_BADGE_COLOR[h.stage] ?? 'text-gray-400 bg-gray-400/10'}`}>{h.stage}</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -792,15 +855,19 @@ export default function ThesisTickerPage() {
   const [fundamentalsError, setFundamentalsError] = useState<string | null>(null)
   const [loadingFundamentals, setLoadingFundamentals] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [fundamentalsHistory, setFundamentalsHistory] = useState<any[]>([])
+  const [viewingFundamentals, setViewingFundamentals] = useState<any>(null)
   const [stage, setStage] = useState<Stage>('quality')
   const [unlocked, setUnlocked] = useState<Stage[]>(['quality'])
 
   useEffect(() => {
     setLoadingFundamentals(true)
+    setViewingFundamentals(null)
     api.thesis.fundamentals(ticker)
       .then((f) => setFundamentals(f))
       .catch((e) => setFundamentalsError(String(e.message || e)))
       .finally(() => setLoadingFundamentals(false))
+    api.thesis.fundamentalsHistory(ticker).then(setFundamentalsHistory).catch(() => setFundamentalsHistory([]))
   }, [ticker])
 
   async function handleRefresh() {
@@ -809,11 +876,18 @@ export default function ThesisTickerPage() {
     try {
       const f = await api.thesis.refreshFundamentals(ticker)
       setFundamentals(f)
+      setViewingFundamentals(null)
+      api.thesis.fundamentalsHistory(ticker).then(setFundamentalsHistory).catch(() => {})
     } catch (e: any) {
       setFundamentalsError(String(e.message || e))
     } finally {
       setRefreshing(false)
     }
+  }
+
+  async function loadFundamentalsSnapshot(id: number) {
+    const snap = await api.thesis.fundamentalsSnapshot(ticker, id)
+    setViewingFundamentals(snap)
   }
 
   function goTo(s: Stage) {
@@ -856,7 +930,34 @@ export default function ThesisTickerPage() {
         <>
           <StageStepper stage={stage} unlocked={unlocked} onSelect={goTo} />
 
-          {stage === 'quality' && <QualityScreen f={fundamentals} onContinue={() => goTo('thesis')} />}
+          {stage === 'quality' && (
+            <>
+              {viewingFundamentals && (
+                <div className="bg-yellow-950/20 border border-yellow-900/50 rounded-lg px-3 py-2 text-xs text-yellow-500 flex items-center justify-between">
+                  <span>Viewing historical snapshot from {new Date(viewingFundamentals._cached_at).toLocaleString()}</span>
+                  <button onClick={() => setViewingFundamentals(null)} className="text-blue-400 hover:underline">Back to current</button>
+                </div>
+              )}
+              <QualityScreen f={viewingFundamentals ?? fundamentals} onContinue={() => goTo('thesis')} />
+              {fundamentalsHistory.length > 1 && (
+                <div>
+                  <h2 className="text-[10px] text-gray-600 uppercase tracking-wider mb-2">Fundamentals History</h2>
+                  <div className="bg-card border border-border rounded-xl overflow-hidden divide-y divide-border/50">
+                    {fundamentalsHistory.map((h) => (
+                      <button
+                        key={h.id}
+                        onClick={() => loadFundamentalsSnapshot(h.id)}
+                        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/5 transition-colors text-left"
+                      >
+                        <span className="text-xs text-gray-400">{new Date(h.fetched_at).toLocaleString()}</span>
+                        <span className="text-xs text-gray-300 tabular-nums">Price {fmtUsd(h.current_price)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
           {stage === 'thesis' && <ThesisStage ticker={ticker} fundamentals={fundamentals} onBack={() => goTo('quality')} onSkipToDcf={() => goTo('dcf')} />}
           {stage === 'dcf' && <DcfStage ticker={ticker} fundamentals={fundamentals} onBack={() => goTo('thesis')} />}
         </>

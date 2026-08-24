@@ -62,8 +62,10 @@ export const api = {
     run:              (id: number)       => get<any>(`/thesis/run/${id}`),
     // Cache-first — instant if already fetched for this ticker, otherwise pulls from yfinance once.
     fundamentals:     (ticker: string)   => get<any>(`/thesis/${encodeURIComponent(ticker)}/fundamentals`),
-    // Force a live re-pull, bypassing the cache — the "Refresh Data" button.
+    // Force a live re-pull, bypassing the cache — the "Refresh Data" button. Always adds a new snapshot.
     refreshFundamentals: (ticker: string) => post(`/thesis/${encodeURIComponent(ticker)}/fetch`, {}),
+    fundamentalsHistory: (ticker: string) => get<any[]>(`/thesis/${encodeURIComponent(ticker)}/fundamentals/history`),
+    fundamentalsSnapshot: (ticker: string, id: number) => get<any>(`/thesis/${encodeURIComponent(ticker)}/fundamentals/snapshot/${id}`),
     generate:         (ticker: string, body: any) => post(`/thesis/${encodeURIComponent(ticker)}/generate`, body),
     // Cache-first Thesis stage read — resolves to null if nothing generated yet, instead of throwing.
     thesisQa:         async (ticker: string) => {
@@ -75,5 +77,7 @@ export const api = {
       }
     },
     generateThesisQa: (ticker: string) => post(`/thesis/${encodeURIComponent(ticker)}/thesis-qa/generate`, {}),
+    thesisQaHistory:  (ticker: string)   => get<any[]>(`/thesis/${encodeURIComponent(ticker)}/thesis-qa/history`),
+    thesisQaSnapshot: (ticker: string, id: number) => get<any>(`/thesis/${encodeURIComponent(ticker)}/thesis-qa/snapshot/${id}`),
   },
 }
