@@ -95,6 +95,7 @@ function MetricRow({ label, value, rating, hint }: { label: string; value: strin
 
 interface ValuationRow {
   label: string
+  hint?: string
   value: string
   rating: Rating
   ownHistory?: string
@@ -116,10 +117,13 @@ function ValuationTable({ rows, peerCount }: { rows: ValuationRow[]; peerCount?:
         <tbody className="divide-y divide-border/30">
           {rows.map((r) => (
             <tr key={r.label}>
-              <td className="py-1.5 px-1 text-gray-300 whitespace-nowrap">{r.label}</td>
-              <td className={`py-1.5 px-1 text-right font-semibold tabular-nums whitespace-nowrap ${RATING_TEXT[r.rating]}`}>{r.value}</td>
-              <td className="py-1.5 px-1 text-right text-gray-500 tabular-nums whitespace-nowrap">{r.ownHistory ?? '—'}</td>
-              <td className="py-1.5 px-1 text-right text-gray-500 tabular-nums whitespace-nowrap">{r.sectorMedian ?? '—'}</td>
+              <td className="py-1.5 px-1 text-gray-300 align-top">
+                <div className="whitespace-nowrap">{r.label}</div>
+                {r.hint && <div className="text-[10px] text-gray-600 leading-snug mt-0.5 whitespace-normal">{r.hint}</div>}
+              </td>
+              <td className={`py-1.5 px-1 text-right font-semibold tabular-nums whitespace-nowrap align-top ${RATING_TEXT[r.rating]}`}>{r.value}</td>
+              <td className="py-1.5 px-1 text-right text-gray-500 tabular-nums whitespace-nowrap align-top">{r.ownHistory ?? '—'}</td>
+              <td className="py-1.5 px-1 text-right text-gray-500 tabular-nums whitespace-nowrap align-top">{r.sectorMedian ?? '—'}</td>
             </tr>
           ))}
         </tbody>
@@ -338,12 +342,12 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
           <ValuationTable
             peerCount={peer.peer_count}
             rows={[
-              { label: 'PEG ratio', value: f.peg_ratio != null ? f.peg_ratio.toFixed(2) : '—', rating: rPeg, sectorMedian: peer.median_peg?.toFixed(2) },
-              { label: 'Forward P/E', value: fmtRatio(f.forward_pe), rating: rForwardPe, sectorMedian: peer.median_forward_pe != null ? fmtRatio(peer.median_forward_pe) : undefined },
-              { label: 'Trailing P/E', value: fmtRatio(f.trailing_pe), rating: rTrailingPe, ownHistory: f.own_pe_median != null ? fmtRatio(f.own_pe_median) : undefined, sectorMedian: peer.median_pe != null ? fmtRatio(peer.median_pe) : undefined },
-              { label: 'EV / EBITDA', value: fmtRatio(f.ev_to_ebitda), rating: rEvEbitda, sectorMedian: peer.median_ev_ebitda != null ? fmtRatio(peer.median_ev_ebitda) : undefined },
-              { label: 'Price / Sales', value: fmtRatio(f.price_to_sales), rating: rPs, ownHistory: f.own_ps_median != null ? fmtRatio(f.own_ps_median) : undefined, sectorMedian: peer.median_ps != null ? fmtRatio(peer.median_ps) : undefined },
-              { label: 'Price / Book', value: fmtRatio(f.price_to_book), rating: rPb, ownHistory: f.own_pb_median != null ? fmtRatio(f.own_pb_median) : undefined, sectorMedian: peer.median_pb != null ? fmtRatio(peer.median_pb) : undefined },
+              { label: 'PEG ratio', hint: 'P/E adjusted for growth — the cleanest cheap-vs-expensive signal', value: f.peg_ratio != null ? f.peg_ratio.toFixed(2) : '—', rating: rPeg, sectorMedian: peer.median_peg?.toFixed(2) },
+              { label: 'Forward P/E', hint: "Price vs. next year's expected earnings", value: fmtRatio(f.forward_pe), rating: rForwardPe, sectorMedian: peer.median_forward_pe != null ? fmtRatio(peer.median_forward_pe) : undefined },
+              { label: 'Trailing P/E', hint: "Price vs. last 12 months' earnings", value: fmtRatio(f.trailing_pe), rating: rTrailingPe, ownHistory: f.own_pe_median != null ? fmtRatio(f.own_pe_median) : undefined, sectorMedian: peer.median_pe != null ? fmtRatio(peer.median_pe) : undefined },
+              { label: 'EV / EBITDA', hint: 'Capital-structure-neutral valuation multiple', value: fmtRatio(f.ev_to_ebitda), rating: rEvEbitda, sectorMedian: peer.median_ev_ebitda != null ? fmtRatio(peer.median_ev_ebitda) : undefined },
+              { label: 'Price / Sales', hint: 'Useful when earnings are thin or negative', value: fmtRatio(f.price_to_sales), rating: rPs, ownHistory: f.own_ps_median != null ? fmtRatio(f.own_ps_median) : undefined, sectorMedian: peer.median_ps != null ? fmtRatio(peer.median_ps) : undefined },
+              { label: 'Price / Book', hint: 'Price vs. net asset value', value: fmtRatio(f.price_to_book), rating: rPb, ownHistory: f.own_pb_median != null ? fmtRatio(f.own_pb_median) : undefined, sectorMedian: peer.median_pb != null ? fmtRatio(peer.median_pb) : undefined },
             ]}
           />
           <MetricRow label="Analyst target upside" value={fmtPct(analystUpside, true)} rating={rUpside} hint={`Current ${fmtUsd(f.current_price)} vs. mean target ${fmtUsd(f.analyst_target_mean)}`} />
