@@ -69,6 +69,7 @@ def fetch_fundamentals(ticker: str) -> dict:
 
         # ── DCF driver inputs ────────────────────────────────────────────
         "net_income_ttm": info.get("netIncomeToCommon"),
+        "net_income_yoy": _yoy(_pluck(income_statement_history, "net_income"), "net_income"),
         "net_income_cagr": _cagr(_pluck(income_statement_history, "net_income"), "net_income"),
 
         # ── Reliability (income statement growth) ─────────────────────────
@@ -77,8 +78,10 @@ def fetch_fundamentals(ticker: str) -> dict:
         "revenue_history": revenue_history,
         "revenue_cagr": _cagr(revenue_history, "revenue"),
         "gross_profit_ttm": gross_profit_ttm,
+        "gross_profit_yoy": _yoy(_pluck(income_statement_history, "gross_profit"), "gross_profit"),
         "gross_profit_cagr": _cagr(_pluck(income_statement_history, "gross_profit"), "gross_profit"),
         "operating_income_ttm": operating_income_ttm,
+        "operating_income_yoy": _yoy(_pluck(income_statement_history, "operating_income"), "operating_income"),
         "operating_income_cagr": _cagr(_pluck(income_statement_history, "operating_income"), "operating_income"),
         "income_statement_history": income_statement_history,
         "analyst_recommendation": info.get("recommendationKey"),
@@ -86,9 +89,12 @@ def fetch_fundamentals(ticker: str) -> dict:
 
         # ── Cash conversion ────────────────────────────────────────────────
         "operating_cashflow_ttm": operating_cashflow_ttm,
+        "operating_cashflow_yoy": _yoy(_pluck(cash_flow_history, "operating_cash_flow"), "ocf"),
         "operating_cashflow_cagr": _cagr(_pluck(cash_flow_history, "operating_cash_flow"), "ocf"),
         "capex_ttm": capex_ttm,
+        "capex_yoy": _yoy(_pluck(cash_flow_history, "capex"), "capex"),
         "capex_cagr": _cagr(_pluck(cash_flow_history, "capex"), "capex"),
+        "fcf_yoy": _yoy(_pluck(cash_flow_history, "fcf"), "fcf"),
         "fcf_cagr": _cagr(_pluck(cash_flow_history, "fcf"), "fcf"),
         "cash_flow_history": cash_flow_history,
 

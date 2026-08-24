@@ -226,12 +226,17 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
   // Reliability (income statement growth)
   const rGrowth = rateAbove(f.revenue_growth_yoy, 0.15, 0)
   const rCagr = rateAbove(f.revenue_cagr, 0.15, 0)
+  const rGrossProfitYoy = rateAbove(f.gross_profit_yoy, 0.15, 0)
   const rGrossProfitCagr = rateAbove(f.gross_profit_cagr, 0.15, 0)
+  const rOperatingIncomeYoy = rateAbove(f.operating_income_yoy, 0.15, 0)
   const rOperatingIncomeCagr = rateAbove(f.operating_income_cagr, 0.15, 0)
+  const rNetIncomeYoy = rateAbove(f.net_income_yoy, 0.15, 0)
   const rNetIncomeCagr = rateAbove(f.net_income_cagr, 0.15, 0)
 
   // Cash conversion
+  const rOcfYoy = rateAbove(f.operating_cashflow_yoy, 0.15, 0)
   const rOcfCagr = rateAbove(f.operating_cashflow_cagr, 0.15, 0)
+  const rFcfYoy = rateAbove(f.fcf_yoy, 0.15, 0)
   const rFcfCagr = rateAbove(f.fcf_cagr, 0.15, 0)
 
   // Profitability & efficiency
@@ -278,16 +283,16 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
           title="Is the business reliable?"
           accent="#3b82f6"
           description="Consistent, well-understood growth across the whole income statement — not lumpy, not a black box."
-          verdictInfo={verdict([rGrowth, rCagr, rGrossProfitCagr, rOperatingIncomeCagr, rNetIncomeCagr])}
+          verdictInfo={verdict([rGrowth, rCagr, rGrossProfitYoy, rGrossProfitCagr, rOperatingIncomeYoy, rOperatingIncomeCagr, rNetIncomeYoy, rNetIncomeCagr])}
         >
-          <MetricRow label="Revenue TTM" value={fmtBig(f.revenue_ttm)} rating="na" hint="Trailing twelve months" />
+          <MetricRow label="Revenue growth (YoY)" value={fmtPct(f.revenue_growth_yoy, true)} rating={rGrowth} hint={`${fmtBig(f.revenue_ttm)} TTM — how fast sales grew over the last year`} />
           <MetricRow label={`Revenue CAGR (${f.revenue_history?.length ? f.revenue_history.length - 1 : '—'}yr)`} value={fmtPct(f.revenue_cagr, true)} rating={rCagr} hint="Compounded growth across available history — smooths one-off spikes" />
-          <MetricRow label="Gross Profit TTM" value={fmtBig(f.gross_profit_ttm)} rating="na" hint="Revenue minus cost of goods sold" />
-          <MetricRow label="Gross Profit CAGR" value={fmtPct(f.gross_profit_cagr, true)} rating={rGrossProfitCagr} hint="Is pricing power/scale keeping pace with revenue?" />
-          <MetricRow label="Operating Income TTM" value={fmtBig(f.operating_income_ttm)} rating="na" hint="Profit from running the business, before interest/tax" />
-          <MetricRow label="Op Income CAGR" value={fmtPct(f.operating_income_cagr, true)} rating={rOperatingIncomeCagr} hint="Is operating leverage improving or eroding?" />
-          <MetricRow label="Net Income TTM" value={fmtBig(f.net_income_ttm)} rating="na" hint="Trailing twelve months" />
-          <MetricRow label="Net Income CAGR" value={fmtPct(f.net_income_cagr, true)} rating={rNetIncomeCagr} hint="Bottom-line growth across available history" />
+          <MetricRow label="Gross Profit YoY" value={fmtPct(f.gross_profit_yoy, true)} rating={rGrossProfitYoy} hint={`${fmtBig(f.gross_profit_ttm)} TTM — is pricing power keeping pace with revenue right now?`} />
+          <MetricRow label="Gross Profit CAGR" value={fmtPct(f.gross_profit_cagr, true)} rating={rGrossProfitCagr} hint="Multi-year trend — compare against YoY to see if it's accelerating or fading" />
+          <MetricRow label="Op Income YoY" value={fmtPct(f.operating_income_yoy, true)} rating={rOperatingIncomeYoy} hint={`${fmtBig(f.operating_income_ttm)} TTM — is operating leverage improving right now?`} />
+          <MetricRow label="Op Income CAGR" value={fmtPct(f.operating_income_cagr, true)} rating={rOperatingIncomeCagr} hint="Multi-year trend — compare against YoY to see if it's accelerating or fading" />
+          <MetricRow label="Net Income YoY" value={fmtPct(f.net_income_yoy, true)} rating={rNetIncomeYoy} hint={`${fmtBig(f.net_income_ttm)} TTM — bottom-line growth over the last year`} />
+          <MetricRow label="Net Income CAGR" value={fmtPct(f.net_income_cagr, true)} rating={rNetIncomeCagr} hint="Multi-year trend — compare against YoY to see if it's accelerating or fading" />
           <GroupedBarChart data={f.income_statement_history} series={[
             { key: 'revenue', label: 'Revenue', color: '#60a5fa' },
             { key: 'gross_profit', label: 'Gross Profit', color: '#34d399' },
@@ -300,14 +305,14 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
           title="Does the business convert profit into cash?"
           accent="#22d3ee"
           description="Reported profit means little if it never shows up as cash — this catches the gap."
-          verdictInfo={verdict([rOcfCagr, rFcfCagr])}
+          verdictInfo={verdict([rOcfYoy, rOcfCagr, rFcfYoy, rFcfCagr])}
         >
-          <MetricRow label="Op Cash Flow TTM" value={fmtBig(f.operating_cashflow_ttm)} rating="na" hint="Cash generated by core operations" />
-          <MetricRow label="Op Cash Flow CAGR" value={fmtPct(f.operating_cashflow_cagr, true)} rating={rOcfCagr} hint="Is cash generation growing with the business?" />
-          <MetricRow label="Capex (latest FY)" value={fmtBig(f.capex_ttm)} rating="na" hint="Cash spent on property/equipment — no true TTM figure available, most recent fiscal year shown" />
-          <MetricRow label="Capex CAGR" value={fmtPct(f.capex_cagr, true)} rating="na" hint="Trend in reinvestment — faster isn't inherently good or bad, depends on what it's funding" />
-          <MetricRow label="FCF TTM" value={fmtBig(f.free_cashflow)} rating="na" hint="Operating cash flow minus capex — cash actually left over" />
-          <MetricRow label="FCF CAGR" value={fmtPct(f.fcf_cagr, true)} rating={rFcfCagr} hint="Hardest metric to fake — the cleanest cash-conversion growth signal" />
+          <MetricRow label="Op Cash Flow YoY" value={fmtPct(f.operating_cashflow_yoy, true)} rating={rOcfYoy} hint={`${fmtBig(f.operating_cashflow_ttm)} TTM — is cash generation growing right now?`} />
+          <MetricRow label="Op Cash Flow CAGR" value={fmtPct(f.operating_cashflow_cagr, true)} rating={rOcfCagr} hint="Multi-year trend — compare against YoY to see if it's accelerating or fading" />
+          <MetricRow label="Capex YoY" value={fmtPct(f.capex_yoy, true)} rating="na" hint={`${fmtBig(f.capex_ttm)} most recent FY (no true TTM figure available) — faster isn't inherently good or bad, depends on what it's funding`} />
+          <MetricRow label="Capex CAGR" value={fmtPct(f.capex_cagr, true)} rating="na" hint="Multi-year reinvestment trend — informational, not graded" />
+          <MetricRow label="FCF YoY" value={fmtPct(f.fcf_yoy, true)} rating={rFcfYoy} hint={`${fmtBig(f.free_cashflow)} TTM — hardest metric to fake, the cleanest cash-conversion signal`} />
+          <MetricRow label="FCF CAGR" value={fmtPct(f.fcf_cagr, true)} rating={rFcfCagr} hint="Multi-year trend — compare against YoY to see if it's accelerating or fading" />
           <GroupedBarChart data={f.cash_flow_history} series={[
             { key: 'operating_cash_flow', label: 'Op. Cash Flow', color: '#60a5fa' },
             { key: 'capex', label: 'Capex', color: '#f87171' },
