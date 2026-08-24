@@ -366,37 +366,133 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
 
 // ── Thesis stage (placeholder — built next) ─────────────────────────────────
 
-function ThesisStage({ onBack, onSkipToDcf }: { onBack: () => void; onSkipToDcf: () => void }) {
-  const questions = [
-    'What is the demand?',
-    'What is the moat?',
-    'Is the moat widening or narrowing?',
-    'Do the numbers complete the story?',
-    'What stage is the company at — Growth, Stabilization, or Mature?',
-  ]
+const STAGE_BADGE_COLOR: Record<string, string> = {
+  Growth: 'text-emerald-400 bg-emerald-400/10',
+  Stabilization: 'text-yellow-400 bg-yellow-400/10',
+  Mature: 'text-gray-400 bg-gray-400/10',
+}
+const MOAT_TREND_COLOR: Record<string, string> = {
+  Widening: 'text-emerald-400', Stable: 'text-yellow-400', Narrowing: 'text-red-400',
+}
+
+function ThesisQaCard({ label, text, accent }: { label: string; text: string; accent: string }) {
   return (
-    <div className="space-y-4 max-w-2xl">
-      <div className="bg-card border border-border rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-gray-100 mb-1">Thesis Builder — coming next</h3>
-        <p className="text-xs text-gray-500 mb-3">
-          Built on top of the Quality Screen above. It will answer a short set of business
-          questions and roll them into a 2-line growth thesis.
-        </p>
-        <ul className="space-y-1.5">
-          {questions.map((q) => (
-            <li key={q} className="text-xs text-gray-400 flex items-center gap-2">
-              <span className="w-1 h-1 rounded-full bg-gray-600 flex-shrink-0" />
-              {q}
-            </li>
-          ))}
-        </ul>
-      </div>
+    <div className="bg-card border border-border rounded-xl p-4" style={{ borderLeftColor: accent, borderLeftWidth: 2 }}>
+      <h4 className="text-xs font-semibold text-gray-300 mb-1.5">{label}</h4>
+      <p className="text-sm text-gray-400 leading-relaxed">{text}</p>
+    </div>
+  )
+}
+
+function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf }: {
+  ticker: string; fundamentals: any; onBack: () => void; onSkipToDcf: () => void
+}) {
+  const [qa, setQa] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setLoading(true)
+    api.thesis.thesisQa(ticker).then(setQa).catch((e) => setError(String(e.message || e))).finally(() => setLoading(false))
+  }, [ticker])
+
+  async function handleGenerate() {
+    setGenerating(true)
+    setError(null)
+    try {
+      const result = await api.thesis.generateThesisQa(ticker)
+      setQa(result)
+    } catch (e: any) {
+      setError(String(e.message || e))
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const stale = qa?._based_on_fetched_at && fundamentals?._cached_at && qa._based_on_fetched_at < fundamentals._cached_at
+
+  return (
+    <div className="space-y-4 max-w-3xl">
+      {loading && <div className="text-xs text-gray-600 py-12 text-center">Loading thesis…</div>}
+
+      {!loading && !qa && (
+        <div className="bg-card border border-border rounded-xl p-5">
+          <h3 className="text-sm font-semibold text-gray-100 mb-1">No thesis generated yet</h3>
+          <p className="text-xs text-gray-500 mb-3">
+            Answers demand, moat, moat direction, and growth stage — grounded in the Quality
+            Screen fundamentals above, with a bounded web search to fill in anything the
+            numbers alone can't answer (e.g. a recent 10-Q disclosure).
+          </p>
+          <button
+            onClick={handleGenerate}
+            disabled={generating}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors disabled:opacity-40"
+          >
+            {generating ? 'Generating…' : 'Generate Thesis'}
+          </button>
+        </div>
+      )}
+
+      {error && <p className="text-xs text-red-400">{error}</p>}
+
+      {qa && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded ${STAGE_BADGE_COLOR[qa.stage] ?? 'text-gray-400 bg-gray-400/10'}`}>
+                {qa.stage}
+              </span>
+              {qa._generated_at && (
+                <span className="text-[10px] text-gray-600">Generated {new Date(qa._generated_at).toLocaleString()}</span>
+              )}
+            </div>
+            <button onClick={handleGenerate} disabled={generating} className="text-[10px] text-blue-400 hover:underline disabled:opacity-40">
+              {generating ? 'Regenerating…' : 'Regenerate'}
+            </button>
+          </div>
+
+          {stale && (
+            <div className="bg-yellow-950/20 border border-yellow-900/50 rounded-lg px-3 py-2 text-[10px] text-yellow-500">
+              Fundamentals were refreshed after this thesis was generated — consider regenerating.
+            </div>
+          )}
+
+          <div className="bg-card border border-border rounded-xl p-4">
+            <h3 className="text-xs font-semibold text-gray-300 mb-1.5">Thesis</h3>
+            <p className="text-sm text-gray-100 leading-relaxed">{qa.thesis_text}</p>
+            <p className="text-[10px] text-gray-600 mt-2">{qa.stage_reason}</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <ThesisQaCard label="What is the demand?" text={qa.demand} accent="#3b82f6" />
+            <ThesisQaCard label="What is the moat?" text={qa.moat} accent="#a78bfa" />
+            <div className="bg-card border border-border rounded-xl p-4" style={{ borderLeftColor: '#f59e0b', borderLeftWidth: 2 }}>
+              <h4 className="text-xs font-semibold text-gray-300 mb-1.5">
+                Is the moat widening or narrowing? <span className={`font-bold ${MOAT_TREND_COLOR[qa.moat_trend] ?? 'text-gray-400'}`}>{qa.moat_trend}</span>
+              </h4>
+              <p className="text-sm text-gray-400 leading-relaxed">{qa.moat_trend_reason}</p>
+            </div>
+            <div className="bg-card border border-border rounded-xl p-4" style={{ borderLeftColor: qa.numbers_support_story ? '#34d399' : '#f87171', borderLeftWidth: 2 }}>
+              <h4 className="text-xs font-semibold text-gray-300 mb-1.5">
+                Do the numbers complete the story? <span className={qa.numbers_support_story ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{qa.numbers_support_story ? 'Yes' : 'No'}</span>
+              </h4>
+              <p className="text-sm text-gray-400 leading-relaxed">{qa.numbers_support_reason}</p>
+            </div>
+          </div>
+
+          {qa.sources_used?.length > 0 && (
+            <div className="text-[10px] text-gray-600">Additional sources: {qa.sources_used.join(', ')}</div>
+          )}
+        </div>
+      )}
+
       <div className="flex gap-2">
         <button onClick={onBack} className="px-4 py-2 rounded-lg text-sm font-medium bg-white/5 text-gray-400 hover:bg-white/10 transition-colors">
           ← Back to Quality Screen
         </button>
         <button onClick={onSkipToDcf} className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors">
-          Skip to DCF →
+          Continue to DCF →
         </button>
       </div>
     </div>
@@ -691,16 +787,30 @@ export default function ThesisTickerPage() {
   const [fundamentals, setFundamentals] = useState<any>(null)
   const [fundamentalsError, setFundamentalsError] = useState<string | null>(null)
   const [loadingFundamentals, setLoadingFundamentals] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [stage, setStage] = useState<Stage>('quality')
   const [unlocked, setUnlocked] = useState<Stage[]>(['quality'])
 
   useEffect(() => {
     setLoadingFundamentals(true)
-    api.thesis.fetchFundamentals(ticker)
+    api.thesis.fundamentals(ticker)
       .then((f) => setFundamentals(f))
       .catch((e) => setFundamentalsError(String(e.message || e)))
       .finally(() => setLoadingFundamentals(false))
   }, [ticker])
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    setFundamentalsError(null)
+    try {
+      const f = await api.thesis.refreshFundamentals(ticker)
+      setFundamentals(f)
+    } catch (e: any) {
+      setFundamentalsError(String(e.message || e))
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   function goTo(s: Stage) {
     setUnlocked((prev) => (prev.includes(s) ? prev : [...prev, s]))
@@ -718,7 +828,12 @@ export default function ThesisTickerPage() {
         {fundamentals?.current_price != null && (
           <div className="text-right">
             <div className="text-xl font-semibold text-gray-100 tabular-nums">{fmtUsd(fundamentals.current_price)}</div>
-            <div className="text-[10px] text-gray-600">Current price</div>
+            <div className="text-[10px] text-gray-600 flex items-center gap-1.5 justify-end">
+              {fundamentals._cached_at ? `Data as of ${new Date(fundamentals._cached_at).toLocaleString()}` : 'Just fetched'}
+              <button onClick={handleRefresh} disabled={refreshing} className="text-blue-400 hover:underline disabled:opacity-40">
+                {refreshing ? 'Refreshing…' : 'Refresh Data'}
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -738,7 +853,7 @@ export default function ThesisTickerPage() {
           <StageStepper stage={stage} unlocked={unlocked} onSelect={goTo} />
 
           {stage === 'quality' && <QualityScreen f={fundamentals} onContinue={() => goTo('thesis')} />}
-          {stage === 'thesis' && <ThesisStage onBack={() => goTo('quality')} onSkipToDcf={() => goTo('dcf')} />}
+          {stage === 'thesis' && <ThesisStage ticker={ticker} fundamentals={fundamentals} onBack={() => goTo('quality')} onSkipToDcf={() => goTo('dcf')} />}
           {stage === 'dcf' && <DcfStage ticker={ticker} fundamentals={fundamentals} onBack={() => goTo('thesis')} />}
         </>
       )}

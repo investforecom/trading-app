@@ -60,7 +60,20 @@ export const api = {
     tickers:          ()                 => get<any[]>('/thesis/tickers'),
     history:          (ticker: string)   => get<any[]>(`/thesis/${encodeURIComponent(ticker)}/history`),
     run:              (id: number)       => get<any>(`/thesis/run/${id}`),
-    fetchFundamentals: (ticker: string)  => post(`/thesis/${encodeURIComponent(ticker)}/fetch`, {}),
+    // Cache-first — instant if already fetched for this ticker, otherwise pulls from yfinance once.
+    fundamentals:     (ticker: string)   => get<any>(`/thesis/${encodeURIComponent(ticker)}/fundamentals`),
+    // Force a live re-pull, bypassing the cache — the "Refresh Data" button.
+    refreshFundamentals: (ticker: string) => post(`/thesis/${encodeURIComponent(ticker)}/fetch`, {}),
     generate:         (ticker: string, body: any) => post(`/thesis/${encodeURIComponent(ticker)}/generate`, body),
+    // Cache-first Thesis stage read — resolves to null if nothing generated yet, instead of throwing.
+    thesisQa:         async (ticker: string) => {
+      try {
+        return await get<any>(`/thesis/${encodeURIComponent(ticker)}/thesis-qa`)
+      } catch (e: any) {
+        if (String(e.message).includes('404')) return null
+        throw e
+      }
+    },
+    generateThesisQa: (ticker: string) => post(`/thesis/${encodeURIComponent(ticker)}/thesis-qa/generate`, {}),
   },
 }

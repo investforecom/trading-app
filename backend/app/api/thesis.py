@@ -1,3 +1,4 @@
+import json
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -7,6 +8,7 @@ from app.db import query, query_one, execute
 from app.fundamentals import fetch_fundamentals, search_tickers
 from app.dcf import DCFInputs, ScenarioInputs, run_dcf
 from app.thesis_ai import generate_thesis
+from app.thesis_qa import generate_thesis_qa
 
 router = APIRouter()
 
@@ -31,6 +33,64 @@ class GenerateBody(BaseModel):
     bear: ScenarioBody
     base: ScenarioBody
     bull: ScenarioBody
+
+
+# ── Fundamentals cache ───────────────────────────────────────────────────────
+# "Current state" cache, one row per ticker — never re-pulled from yfinance
+# unless the user explicitly hits Refresh Data.
+
+def _load_fundamentals_cache(ticker: str) -> dict | None:
+    row = query_one("""
+        SELECT data_json, fetched_at FROM ticker_fundamentals_cache
+        WHERE owner_id = %s AND ticker = %s
+    """, (OWNER_ID, ticker))
+    if not row:
+        return None
+    return {**row["data_json"], "_cached_at": row["fetched_at"].isoformat()}
+
+
+def _save_fundamentals_cache(ticker: str, data: dict) -> None:
+    execute("""
+        INSERT INTO ticker_fundamentals_cache (owner_id, ticker, fetched_at, data_json)
+        VALUES (%s, %s, now(), %s)
+        ON CONFLICT (owner_id, ticker) DO UPDATE SET
+            fetched_at = now(), data_json = EXCLUDED.data_json
+    """, (OWNER_ID, ticker, _json(data)))
+
+
+def _get_or_fetch_fundamentals(ticker: str) -> dict:
+    """Cache-first fundamentals lookup — fetches from yfinance only on a cache miss."""
+    cached = _load_fundamentals_cache(ticker)
+    if cached:
+        return cached
+    data = fetch_fundamentals(ticker)
+    _save_fundamentals_cache(ticker, data)
+    return {**data, "_cached_at": None}
+
+
+# ── Thesis (business Q&A) cache ─────────────────────────────────────────────
+
+def _load_thesis_cache(ticker: str) -> dict | None:
+    row = query_one("""
+        SELECT data_json, generated_at, based_on_fetched_at FROM ticker_thesis_cache
+        WHERE owner_id = %s AND ticker = %s
+    """, (OWNER_ID, ticker))
+    if not row:
+        return None
+    return {
+        **row["data_json"],
+        "_generated_at": row["generated_at"].isoformat(),
+        "_based_on_fetched_at": row["based_on_fetched_at"].isoformat() if row["based_on_fetched_at"] else None,
+    }
+
+
+def _save_thesis_cache(ticker: str, data: dict, based_on_fetched_at: str | None) -> None:
+    execute("""
+        INSERT INTO ticker_thesis_cache (owner_id, ticker, generated_at, based_on_fetched_at, data_json)
+        VALUES (%s, %s, now(), %s, %s)
+        ON CONFLICT (owner_id, ticker) DO UPDATE SET
+            generated_at = now(), based_on_fetched_at = EXCLUDED.based_on_fetched_at, data_json = EXCLUDED.data_json
+    """, (OWNER_ID, ticker, based_on_fetched_at, _json(data)))
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -78,25 +138,73 @@ def get_run(run_id: int):
     return row
 
 
-@router.post("/{ticker}/fetch")
-def fetch(ticker: str):
-    """Pull fresh fundamentals from yfinance to prefill the DCF form. Not saved."""
+@router.get("/{ticker}/fundamentals")
+def get_fundamentals(ticker: str):
+    """Cache-first fundamentals — the normal way the Quality Screen loads data."""
+    ticker = ticker.upper()
     try:
-        return fetch_fundamentals(ticker.upper())
+        return _get_or_fetch_fundamentals(ticker)
     except Exception as exc:
         raise HTTPException(400, str(exc))
+
+
+@router.post("/{ticker}/fetch")
+def fetch(ticker: str):
+    """Force a live re-pull from yfinance, bypassing the cache — the Refresh Data button."""
+    ticker = ticker.upper()
+    try:
+        data = fetch_fundamentals(ticker)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+    _save_fundamentals_cache(ticker, data)
+    return {**data, "_cached_at": None}
+
+
+@router.get("/{ticker}/thesis-qa")
+def get_thesis_qa(ticker: str):
+    """Cache-first Thesis stage read. 404 if nothing has been generated yet."""
+    cached = _load_thesis_cache(ticker.upper())
+    if not cached:
+        raise HTTPException(404, "No thesis generated yet")
+    return cached
+
+
+@router.post("/{ticker}/thesis-qa/generate")
+def generate_thesis_qa_endpoint(ticker: str):
+    """
+    Answer the business questions and produce the 2-line growth thesis,
+    grounded in the cached (or freshly fetched) fundamentals. Overwrites the
+    cached thesis — this is a "current state", not history like DCF runs.
+    """
+    ticker = ticker.upper()
+    try:
+        fundamentals = _get_or_fetch_fundamentals(ticker)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+    try:
+        qa = generate_thesis_qa(ticker, fundamentals)
+    except Exception as exc:
+        raise HTTPException(502, f"Thesis generation failed: {exc}")
+
+    _save_thesis_cache(ticker, qa, fundamentals.get("_cached_at"))
+    return {
+        **qa,
+        "_generated_at": None,
+        "_based_on_fetched_at": fundamentals.get("_cached_at"),
+    }
 
 
 @router.post("/{ticker}/generate")
 def generate(ticker: str, body: GenerateBody):
     """
-    Fetch fundamentals (fresh), run the 3-scenario DCF, call Claude for the
+    Run the 3-scenario DCF against cached fundamentals, call Claude for the
     written thesis + risks, and save the whole run as a new row (history is
     never overwritten).
     """
     ticker = ticker.upper()
     try:
-        fundamentals = fetch_fundamentals(ticker)
+        fundamentals = _get_or_fetch_fundamentals(ticker)
     except Exception as exc:
         raise HTTPException(400, str(exc))
 
@@ -145,5 +253,4 @@ def generate(ticker: str, body: GenerateBody):
 
 
 def _json(obj):
-    import json
     return json.dumps(obj, default=str)
