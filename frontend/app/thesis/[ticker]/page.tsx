@@ -894,44 +894,56 @@ function TerminalCrossCheck({ result }: { result: any }) {
   )
 }
 
-// Compares the Gordon-growth price against an exit-multiple price grounded
-// in TODAY'S actual trading multiple (EV/driver, or equity/driver when the
-// net-debt bridge is off) — a genuinely independent, market-based second
-// opinion. Deliberately does NOT reuse ScenarioForm's live-synced hidden
-// terminal field: that field is defined to equal the Gordon-implied
-// multiple, so comparing against it would always show ~0% apart.
+// Cross-checks the growth story against the market: same Stage 1/Stage 2/
+// discount-rate assumptions either way, but the terminal value's basis
+// differs — (a) cash flows growing at your chosen terminal growth rate
+// forever ("Growth Story"), vs. (b) the market still paying today's actual
+// trading multiple for the terminal-year driver value ("Market Today").
+// Deliberately independent of ScenarioForm's own Gordon/Exit toggle above —
+// this always computes BOTH, regardless of which one you've selected to
+// drive the headline Bear/Base/Bull numbers, so the two sides here can
+// genuinely disagree instead of one silently mirroring the other.
 function MethodAgreement({
-  startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, currentPrice, base,
+  startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, currentPrice, driverLabel, base,
 }: {
   startingValue: number; shares: number; netDebt: number; includeBridge: boolean
-  dilutionRate: number; dilutionYears: number; currentPrice: number | null | undefined; base: any
+  dilutionRate: number; dilutionYears: number; currentPrice: number | null | undefined; driverLabel: string; base: any
 }) {
   if (!base?.assumptions || !currentPrice || !shares || !startingValue) return null
   const currentEquityValue = currentPrice * shares
   const currentMultiple = (includeBridge ? currentEquityValue + netDebt : currentEquityValue) / startingValue
   if (!Number.isFinite(currentMultiple) || currentMultiple <= 0) return null
 
-  const gordonAssumptions = { ...base.assumptions, terminal_method: 'gordon' as const }
-  const exitAssumptions = { ...base.assumptions, terminal_method: 'exit_multiple' as const, exit_multiple: currentMultiple }
-  const gordon = runScenario(startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, gordonAssumptions)
-  const exit = runScenario(startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, exitAssumptions)
-  if (gordon.error || exit.error || gordon.implied_price == null || exit.implied_price == null) return null
+  const growthAssumptions = { ...base.assumptions, terminal_method: 'gordon' as const }
+  const marketAssumptions = { ...base.assumptions, terminal_method: 'exit_multiple' as const, exit_multiple: currentMultiple }
+  const growth = runScenario(startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, growthAssumptions)
+  const market = runScenario(startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, marketAssumptions)
+  if (growth.error || market.error || growth.implied_price == null || market.implied_price == null) return null
 
-  const diff = Math.abs(gordon.implied_price - exit.implied_price) / Math.max(gordon.implied_price, exit.implied_price)
+  const diff = Math.abs(growth.implied_price - market.implied_price) / Math.max(growth.implied_price, market.implied_price)
   const verdict = diff < 0.10
-    ? { label: 'Methods agree — valuation looks robust', color: 'text-emerald-400' }
+    ? { label: 'Agree — valuation looks robust', color: 'text-emerald-400' }
     : diff < 0.25
       ? { label: 'Some divergence — worth reviewing assumptions', color: 'text-yellow-400' }
-      : { label: 'Methods diverge significantly — assumptions may be inconsistent', color: 'text-red-400' }
+      : { label: 'Diverge significantly — growth story and market pricing disagree', color: 'text-red-400' }
+
+  const usingCustomMultiple = base.terminal_method_used === 'exit_multiple' && base.assumptions.exit_multiple != null
+    && Math.abs(base.assumptions.exit_multiple - currentMultiple) / currentMultiple > 0.02
 
   return (
     <div className="bg-card border border-border rounded-xl p-4">
-      <h3 className="text-xs font-semibold text-gray-300 mb-2">Method Agreement (Base Case)</h3>
+      <h3 className="text-xs font-semibold text-gray-300 mb-1">Growth Story vs. Market Today (Base Case)</h3>
+      <p className="text-[10px] text-gray-600 mb-2">Same Stage 1/2 and discount rate either way — only how the terminal value is priced differs.</p>
       <div className="grid grid-cols-2 gap-3 mb-2">
-        <Stat label="Perpetuity Method" value={fmtUsd(gordon.implied_price)} sub={`${fmtPct(gordonAssumptions.terminal_growth)} terminal growth`} />
-        <Stat label="Exit Multiple Method" value={fmtUsd(exit.implied_price)} sub={`${currentMultiple.toFixed(1)}x — today's actual multiple`} />
+        <Stat label="Growth Story" value={fmtUsd(growth.implied_price)} sub={`cash flows grow ${fmtPct(growthAssumptions.terminal_growth)}/yr forever after Stage 1/2`} />
+        <Stat label="Market Today" value={fmtUsd(market.implied_price)} sub={`market keeps paying ${currentMultiple.toFixed(1)}x ${driverLabel} — today's actual multiple`} />
       </div>
       <p className={`text-xs font-medium ${verdict.color}`}>{verdict.label} ({fmtPct(diff)} apart)</p>
+      {usingCustomMultiple && (
+        <p className="text-[10px] text-gray-600 mt-2 pt-2 border-t border-border/40">
+          Note: your Base case above uses its own {base.assumptions.exit_multiple.toFixed(1)}x multiple, not today's {currentMultiple.toFixed(1)}x used in this cross-check.
+        </p>
+      )}
     </div>
   )
 }
@@ -1259,6 +1271,7 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
               dilutionRate={methodCheckInputs.dilutionRate}
               dilutionYears={methodCheckInputs.dilutionYears}
               currentPrice={displayed.current_price}
+              driverLabel={methodCheckInputs.driverLabel}
               base={displayed.base}
             />
           )}
