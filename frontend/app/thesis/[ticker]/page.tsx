@@ -4,41 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
 import { runDcf, runScenario, impliedMultipleFromGordon, impliedGrowthFromMultiple } from '@/lib/dcf'
-
-// ── formatting helpers ──────────────────────────────────────────────────────
-
-function fmtUsd(n: number | null | undefined, decimals = 2) {
-  if (n == null || Number.isNaN(n)) return '—'
-  return `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`
-}
-function fmtBig(n: number | null | undefined) {
-  if (n == null) return '—'
-  const abs = Math.abs(n)
-  if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`
-  if (abs >= 1e6) return `$${(n / 1e6).toFixed(2)}M`
-  return fmtUsd(n)
-}
-function fmtPct(n: number | null | undefined, signed = false) {
-  if (n == null || Number.isNaN(n)) return '—'
-  const v = (n * 100).toFixed(1)
-  return signed && n > 0 ? `+${v}%` : `${v}%`
-}
-function fmtRatio(n: number | null | undefined) {
-  if (n == null || Number.isNaN(n)) return '—'
-  return `${n.toFixed(2)}x`
-}
-function fmtShares(n: number | null | undefined) {
-  if (n == null) return '—'
-  return `${(n / 1e6).toFixed(0)}M`
-}
-function upsideColor(current: number | null, target: number | null) {
-  if (current == null || target == null) return 'text-gray-500'
-  return target > current ? 'text-emerald-400' : target < current ? 'text-red-400' : 'text-gray-400'
-}
-function vsCurrentPct(current: number | null | undefined, fv: number | null | undefined): string | undefined {
-  if (current == null || fv == null || !current) return undefined
-  return `${fmtPct(fv / current - 1, true)} vs current`
-}
+import { fmtUsd, fmtBig, fmtPct, fmtRatio, fmtShares, upsideColor, vsCurrentPct } from '@/lib/format'
 
 // ── rating system ────────────────────────────────────────────────────────
 // Every metric gets a plain-language color: green = good, yellow = mixed,
@@ -1231,9 +1197,16 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
             <h2 className="text-[10px] text-gray-600 uppercase tracking-wider">
               {viewingRun ? `Saved run${viewingRun.name ? ` · ${viewingRun.name}` : ''} · ${new Date(viewingRun.created_at).toLocaleString()}` : 'Live — updates as you edit assumptions'}
             </h2>
-            {viewingRun && (
-              <button onClick={() => setViewingRun(null)} className="text-[10px] text-blue-400 hover:underline">Edit these assumptions</button>
-            )}
+            <div className="flex items-center gap-3">
+              {basedOnRunId != null && (
+                <a href={`/thesis/${ticker}/report/${basedOnRunId}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-400 hover:underline">
+                  Generate Report ↗
+                </a>
+              )}
+              {viewingRun && (
+                <button onClick={() => setViewingRun(null)} className="text-[10px] text-blue-400 hover:underline">Edit these assumptions</button>
+              )}
+            </div>
           </div>
 
           {!viewingRun && (liveResult?.bear.error || liveResult?.base.error || liveResult?.bull.error) && (
