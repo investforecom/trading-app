@@ -57,7 +57,7 @@ no text before or after the fence:
   "growth_rate_pct": 25,
   "growth_years": 5,
   "normalized_growth_pct": 6,
-  "thesis_text": "Exactly 2 sentences: (1) 'The business is in the <Stage> stage and should compound <growth_basis> at roughly <growth_rate_pct>% annually for the next <growth_years> years before normalizing to <normalized_growth_pct>%.' (2) One sentence on the core justification.",
+  "thesis_text": "Exactly 2 short, plain sentences: (1) 'The business is in the <Stage> stage and should compound <growth_basis> at roughly <growth_rate_pct>% annually for the next <growth_years> years before normalizing to <normalized_growth_pct>%.' (2) ONE short sentence (max ~20 words) citing the single strongest supporting data point — not a list of several figures.",
   "main_risks": [{"title": "short risk label, max 8 words", "detail": "1-2 sentences justifying it against the specific numbers or narrative above — not generic market risk"}],
   "catalysts": [{"title": "short catalyst label, max 8 words", "timing": "e.g. 'Q2 FY27 earnings, Aug 26 2026' or 'Ongoing' or 'Next 6-12 months' — be as specific as the evidence allows", "detail": "1-2 sentences on what happens and why it matters to this thesis"}],
   "sources_used": ["short label per web search source actually used, e.g. 'Q2 FY26 10-Q' — empty array if none used"]
@@ -137,13 +137,26 @@ THESIS_QA_REQUIRED = [
 DCF_THESIS_REQUIRED = ["thesis_text", "top_risks", "scenario_commentary", "target_price"]
 
 
+DRIVER_TO_BASIS = {"fcf": "FCF", "revenue": "Sales", "net_income": "Earnings"}
+
+
 def handle_thesis_qa(req: dict) -> dict:
     ticker = req["ticker"]
     fundamentals = req["fundamentals"]
+    recommended = req.get("recommended_driver") or {}
+    recommended_basis = DRIVER_TO_BASIS.get(recommended.get("driver"), "Sales")
+
     prompt = f"""{THESIS_QA_SYSTEM}
 
 Ticker: {ticker} ({fundamentals.get("long_name")})
 Sector: {fundamentals.get("sector")} / {fundamentals.get("industry")}
+
+The DCF stage this thesis feeds into has already mechanically determined the right \
+valuation driver for this company: {recommended.get("driver", "revenue").upper()} \
+({recommended.get("reason", "")}). Your growth_basis MUST be "{recommended_basis}" to match \
+it — anchor growth_rate_pct, growth_years, and normalized_growth_pct on that specific \
+metric's own trajectory, not a different one. Only deviate if {recommended_basis} is \
+genuinely inapplicable (e.g. no usable data for it), and if so say why in stage_reason.
 
 Quality Screen fundamentals:
 {json.dumps(fundamentals, indent=2, default=str)}

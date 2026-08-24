@@ -390,3 +390,27 @@ def _cagr(history: list[dict], _label: str) -> float | None:
     if not first or first < 0 or years <= 0:
         return None
     return (last / first) ** (1 / years) - 1
+
+
+# Mirrors recommendDriver() in frontend/app/thesis/[ticker]/page.tsx — same
+# rules, kept in sync deliberately (like dcf.py/dcf.ts): the frontend needs
+# this for the instant, no-network DCF-stage banner; the backend needs it
+# here so the Thesis prompt can be told which driver to anchor on, instead
+# of the two stages picking independently and disagreeing.
+def recommend_driver(f: dict) -> dict:
+    sector_industry = f"{f.get('sector') or ''} {f.get('industry') or ''}".lower()
+    is_financial = any(k in sector_industry for k in
+                        ("bank", "insurance", "capital markets", "asset management", "financial services"))
+    if is_financial:
+        label = f.get("industry") or f.get("sector") or "This sector"
+        return {"driver": "net_income", "reason": f"{label}: FCF/capex isn't a meaningful valuation driver — net income is standard."}
+
+    fcf = f.get("free_cashflow")
+    if fcf is not None and fcf > 0:
+        return {"driver": "fcf", "reason": f"Free cash flow is positive (${fcf / 1e9:.1f}B TTM) — the most direct, standard approach."}
+
+    rev_growth = f.get("revenue_growth_yoy")
+    if rev_growth is not None and rev_growth > 0.15:
+        return {"driver": "revenue", "reason": f"FCF is negative or unavailable, but revenue is growing {rev_growth * 100:.1f}% YoY — a revenue-multiple approach avoids modeling a perpetuity off negative cash flow."}
+
+    return {"driver": "revenue", "reason": "FCF is negative or unavailable and growth is modest — revenue is the most stable available base, though this case deserves extra scrutiny."}

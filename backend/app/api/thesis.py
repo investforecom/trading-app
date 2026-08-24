@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.db import query, query_one
-from app.fundamentals import fetch_fundamentals, search_tickers
+from app.fundamentals import fetch_fundamentals, search_tickers, recommend_driver
 from app.dcf import DCFInputs, ScenarioInputs, run_dcf
 from app.thesis_ai import generate_thesis
 from app.thesis_qa import generate_thesis_qa
@@ -244,8 +244,10 @@ def generate_thesis_qa_endpoint(ticker: str):
     except Exception as exc:
         raise HTTPException(400, str(exc))
 
+    recommended = recommend_driver(fundamentals)
+
     try:
-        qa = generate_thesis_qa(ticker, fundamentals)
+        qa = generate_thesis_qa(ticker, fundamentals, recommended)
     except Exception as exc:
         raise HTTPException(502, f"Thesis generation failed: {exc}")
 

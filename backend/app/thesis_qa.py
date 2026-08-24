@@ -7,5 +7,5 @@ user's Claude Code subscription — not the billed API).
 from app.claude_bridge import call_bridge
 
 
-def generate_thesis_qa(ticker: str, fundamentals: dict) -> dict:
-    return call_bridge("thesis_qa", ticker=ticker, fundamentals=fundamentals)
+def generate_thesis_qa(ticker: str, fundamentals: dict, recommended_driver: dict) -> dict:
+    return call_bridge("thesis_qa", ticker=ticker, fundamentals=fundamentals, recommended_driver=recommended_driver)
