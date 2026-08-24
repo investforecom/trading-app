@@ -239,9 +239,9 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
   const pbBenchmark = peer.median_pb ?? f.own_pb_median
 
   const rPeg = rateBelow(f.peg_ratio, 1, 2)
-  const rForwardPe = rateBelow(f.forward_pe, 20, 35)
+  const rForwardPe = peer.median_forward_pe != null ? rateRelative(f.forward_pe, peer.median_forward_pe) : rateBelow(f.forward_pe, 20, 35)
   const rTrailingPe = peBenchmark != null ? rateRelative(f.trailing_pe, peBenchmark) : 'na'
-  const rEvEbitda = rateBelow(f.ev_to_ebitda, 15, 25)
+  const rEvEbitda = peer.median_ev_ebitda != null ? rateRelative(f.ev_to_ebitda, peer.median_ev_ebitda) : rateBelow(f.ev_to_ebitda, 15, 25)
   const rPs = psBenchmark != null ? rateRelative(f.price_to_sales, psBenchmark) : rateBelow(f.price_to_sales, 5, 10)
   const rPb = pbBenchmark != null ? rateRelative(f.price_to_book, pbBenchmark) : rateBelow(f.price_to_book, 5, 10)
   const rUpside = rateAbove(analystUpside, 0.15, 0)
@@ -321,14 +321,24 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
             rating={rPeg}
             hint={benchmarkHint('P/E adjusted for growth — the cleanest cheap-vs-expensive signal', null, null, peer.median_peg, peer.peer_count)}
           />
-          <MetricRow label="Forward P/E" value={fmtRatio(f.forward_pe)} rating={rForwardPe} hint="Price vs. next year's expected earnings" />
+          <MetricRow
+            label="Forward P/E"
+            value={fmtRatio(f.forward_pe)}
+            rating={rForwardPe}
+            hint={benchmarkHint("Price vs. next year's expected earnings", null, null, peer.median_forward_pe, peer.peer_count)}
+          />
           <MetricRow
             label="Trailing P/E"
             value={fmtRatio(f.trailing_pe)}
             rating={rTrailingPe}
             hint={benchmarkHint("Price vs. last 12 months' earnings", f.own_pe_median, peRange, peer.median_pe, peer.peer_count)}
           />
-          <MetricRow label="EV / EBITDA" value={fmtRatio(f.ev_to_ebitda)} rating={rEvEbitda} hint="Capital-structure-neutral valuation multiple" />
+          <MetricRow
+            label="EV / EBITDA"
+            value={fmtRatio(f.ev_to_ebitda)}
+            rating={rEvEbitda}
+            hint={benchmarkHint('Capital-structure-neutral valuation multiple', null, null, peer.median_ev_ebitda, peer.peer_count)}
+          />
           <MetricRow
             label="Price / Sales"
             value={fmtRatio(f.price_to_sales)}

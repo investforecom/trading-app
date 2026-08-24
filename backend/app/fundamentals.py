@@ -215,12 +215,16 @@ def _own_valuation_history(t: "yf.Ticker") -> list[dict]:
 
 # Sanity bounds per multiple — screens out bad ADR/currency-mismatch data
 # (e.g. a foreign ADR occasionally reports a P/S two orders of magnitude off).
-_MULTIPLE_BOUNDS = {"pe": (0, 500), "ps": (0.1, 100), "pb": (0, 100), "peg": (0, 20)}
+_MULTIPLE_BOUNDS = {
+    "pe": (0, 500), "forward_pe": (0, 500), "ps": (0.1, 100), "pb": (0, 100),
+    "peg": (0, 20), "ev_ebitda": (0, 100),
+}
 
 
-def _peer_benchmark(ticker: str, industry_key: str | None, max_peers: int = 8) -> dict:
-    """Median P/E, P/S, P/B, PEG across same-industry peers, via yfinance's
-    Industry.top_companies list. Best-effort — returns {} on any failure."""
+def _peer_benchmark(ticker: str, industry_key: str | None, max_peers: int = 5) -> dict:
+    """Median P/E, forward P/E, P/S, P/B, EV/EBITDA, PEG across same-industry
+    peers, via yfinance's Industry.top_companies list. Best-effort — returns
+    {} on any failure."""
     if not industry_key:
         return {}
     try:
@@ -237,8 +241,10 @@ def _peer_benchmark(ticker: str, industry_key: str | None, max_peers: int = 8) -
                 return {
                     "symbol": sym,
                     "pe": i.get("trailingPE"),
+                    "forward_pe": i.get("forwardPE"),
                     "ps": i.get("priceToSalesTrailing12Months"),
                     "pb": i.get("priceToBook"),
+                    "ev_ebitda": i.get("enterpriseToEbitda"),
                     "peg": i.get("pegRatio") or i.get("trailingPegRatio"),
                 }
             except Exception:
@@ -256,8 +262,10 @@ def _peer_benchmark(ticker: str, industry_key: str | None, max_peers: int = 8) -
             "peer_count": len(results),
             "peers": sorted(r["symbol"] for r in results),
             "median_pe": median("pe"),
+            "median_forward_pe": median("forward_pe"),
             "median_ps": median("ps"),
             "median_pb": median("pb"),
+            "median_ev_ebitda": median("ev_ebitda"),
             "median_peg": median("peg"),
         }
     except Exception:
