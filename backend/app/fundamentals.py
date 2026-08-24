@@ -74,7 +74,7 @@ def fetch_fundamentals(ticker: str) -> dict:
 
         # ── Reliability (income statement growth) ─────────────────────────
         "revenue_ttm": revenue_ttm,
-        "revenue_growth_yoy": info.get("revenueGrowth"),
+        "revenue_growth_yoy": _yoy(revenue_history, "revenue"),
         "revenue_history": revenue_history,
         "revenue_cagr": _cagr(revenue_history, "revenue"),
         "gross_profit_ttm": gross_profit_ttm,
