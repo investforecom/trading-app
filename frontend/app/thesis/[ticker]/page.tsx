@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
-import { runDcf } from '@/lib/dcf'
+import { runDcf, runScenario, impliedMultipleFromGordon, impliedGrowthFromMultiple } from '@/lib/dcf'
 
 // ── formatting helpers ──────────────────────────────────────────────────────
 
@@ -613,24 +613,46 @@ function defaultScenarios(f: any, driver: Driver): { bear: Scenario; base: Scena
   }
 }
 
-// Stage 1 = the Thesis's headline growth call (growth_rate_pct for
-// growth_years). The Thesis's "normalized" growth is a business concept —
-// for a strong long-term compounder it can legitimately be well above a
-// perpetuity rate — so it feeds a realistic Stage 2 follow-on window, not
-// the DCF's terminal rate directly. Terminal growth is always kept
-// conservative and safely below the discount rate, which Gordon growth
-// requires mathematically. Bear/bull are offsets from the base case.
+// The Thesis's growth call is about one specific metric (growth_basis:
+// FCF/Sales/Earnings). FCF growth, revenue growth, and net income growth are
+// frequently different numbers for the same company (operating leverage,
+// heavy reinvestment, etc.) — so only apply the Thesis's rate when it
+// actually matches the selected driver; otherwise fall back to that driver's
+// own historical growth.
+const GROWTH_BASIS_TO_DRIVER: Record<string, Driver> = { FCF: 'fcf', Sales: 'revenue', Earnings: 'net_income' }
+
+function driverGrowthFallback(f: any, driver: Driver): number {
+  if (driver === 'revenue') return f?.revenue_growth_yoy ?? 0.10
+  if (driver === 'net_income') return Math.min(Math.max(f?.net_income_cagr ?? f?.revenue_growth_yoy ?? 0.10, -0.05), 0.60)
+  return f?.revenue_growth_yoy ?? 0.10  // fcf: no FCF history fetched yet — revenue growth is the closest available proxy
+}
+
+// Stage 1 = the Thesis's headline growth call, when it's about the selected
+// driver's metric (see above) — otherwise the driver's own historical
+// growth. The Thesis's "normalized" growth is a business concept — for a
+// strong long-term compounder it can legitimately be well above a perpetuity
+// rate — so it feeds a realistic Stage 2 follow-on window, not the DCF's
+// terminal rate directly. Terminal growth is always kept conservative and
+// safely below the discount rate, which Gordon growth requires
+// mathematically. Bear/bull are offsets from the base case. exit_multiple is
+// always populated (even in Gordon mode) with the multiple Gordon itself
+// implies, so switching methods — or the Method Agreement check — starts
+// from a self-consistent number rather than an arbitrary default.
 function defaultScenariosFromThesis(thesis: any, f: any, driver: Driver): { bear: Scenario; base: Scenario; bull: Scenario } {
-  const stage1Growth = (thesis?.growth_rate_pct ?? 10) / 100
-  const stage2Growth = (thesis?.normalized_growth_pct ?? 5) / 100
-  const stage1Years = thesis?.growth_years ?? 5
+  const basisMatches = GROWTH_BASIS_TO_DRIVER[thesis?.growth_basis] === driver
+  const fallbackGrowth = driverGrowthFallback(f, driver)
+  const stage1Growth = basisMatches ? (thesis?.growth_rate_pct ?? 10) / 100 : fallbackGrowth
+  const stage2Growth = basisMatches ? (thesis?.normalized_growth_pct ?? 5) / 100 : Math.max(fallbackGrowth - 0.05, 0.03)
+  const stage1Years = basisMatches ? (thesis?.growth_years ?? 5) : 5
   const stage2Years = 5
   const isRevenue = driver === 'revenue'
   const defaultMultiple = f?.peer_benchmark?.median_ps ?? 5
-  const safeTerminal = (discountRate: number) => Math.min(0.025, discountRate - 0.02)
 
   const mk = (growthDelta: number, discountRate: number, stage2Delta: number, multipleDelta: number): Scenario => {
-    const terminalGrowth = safeTerminal(discountRate)
+    const terminalGrowth = Math.min(0.025, discountRate - 0.02)
+    const exitMultiple = isRevenue
+      ? Math.max(defaultMultiple + multipleDelta, 1)
+      : Math.round(((impliedMultipleFromGordon(terminalGrowth, discountRate) ?? 15) + multipleDelta) * 100) / 100
     return {
       stage1_growth: Math.max(stage1Growth + growthDelta, -0.05),
       stage1_decay: 0,
@@ -639,7 +661,7 @@ function defaultScenariosFromThesis(thesis: any, f: any, driver: Driver): { bear
       stage2_years: stage2Years,
       terminal_growth: terminalGrowth,
       terminal_method: isRevenue ? 'exit_multiple' : 'gordon',
-      exit_multiple: isRevenue ? Math.max(defaultMultiple + multipleDelta, 1) : null,
+      exit_multiple: Math.max(exitMultiple, 1),
       discount_rate: discountRate,
     }
   }
@@ -655,6 +677,10 @@ function ScenarioForm({ label, color, value, onChange }: {
   label: string; color: string; value: Scenario; onChange: (s: Scenario) => void
 }) {
   // Percent fields are stored as decimals (0.15) but edited as percentages (15).
+  // Whichever terminal field is hidden (exit_multiple in Gordon mode, or vice
+  // versa) is kept self-consistent with the visible one, so the Method
+  // Agreement check always compares against a number the user actually
+  // implied — not a stale/arbitrary default.
   const pct = (key: 'stage1_growth' | 'stage1_decay' | 'stage2_growth' | 'terminal_growth' | 'discount_rate', fieldLabel: string, step = 0.5) => (
     <label className="block">
       <span className="text-[10px] text-gray-600">{fieldLabel}</span>
@@ -663,7 +689,17 @@ function ScenarioForm({ label, color, value, onChange }: {
           type="number"
           step={step}
           value={Math.round(value[key] * 1000) / 10}
-          onChange={(e) => onChange({ ...value, [key]: (parseFloat(e.target.value) || 0) / 100 })}
+          onChange={(e) => {
+            const next = { ...value, [key]: (parseFloat(e.target.value) || 0) / 100 }
+            if (value.terminal_method === 'gordon' && (key === 'terminal_growth' || key === 'discount_rate')) {
+              const m = impliedMultipleFromGordon(next.terminal_growth, next.discount_rate)
+              if (m != null) next.exit_multiple = Math.round(m * 100) / 100
+            } else if (value.terminal_method === 'exit_multiple' && key === 'discount_rate' && next.exit_multiple) {
+              const g = impliedGrowthFromMultiple(next.exit_multiple, next.discount_rate)
+              if (g != null) next.terminal_growth = Math.round(g * 10000) / 10000
+            }
+            onChange(next)
+          }}
           className="w-full bg-surface border border-border rounded px-2 py-1 pr-5 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
         />
         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-600 pointer-events-none">%</span>
@@ -688,7 +724,14 @@ function ScenarioForm({ label, color, value, onChange }: {
         <input
           type="number" step={0.5} min={0}
           value={value.exit_multiple ?? 0}
-          onChange={(e) => onChange({ ...value, exit_multiple: parseFloat(e.target.value) || 0 })}
+          onChange={(e) => {
+            const next = { ...value, exit_multiple: parseFloat(e.target.value) || 0 }
+            if (value.terminal_method === 'exit_multiple' && next.exit_multiple) {
+              const g = impliedGrowthFromMultiple(next.exit_multiple, next.discount_rate)
+              if (g != null) next.terminal_growth = Math.round(g * 10000) / 10000
+            }
+            onChange(next)
+          }}
           className="w-full bg-surface border border-border rounded px-2 py-1 pr-5 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
         />
         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-600 pointer-events-none">x</span>
@@ -774,11 +817,81 @@ function DriverPill({ label, active, onClick }: { label: string; active: boolean
 function TerminalCrossCheck({ result }: { result: any }) {
   if (!result) return null
   const usingGordon = result.terminal_method_used === 'gordon'
+  const pctTerminal = result.pv_explicit + result.pv_terminal > 0 ? result.pv_terminal / (result.pv_explicit + result.pv_terminal) : null
   return (
     <div className="text-[10px] text-gray-600">
-      {usingGordon
-        ? `Gordon growth used — implies a ${result.implied_exit_multiple_from_gordon ?? '—'}x exit multiple`
-        : `${result.assumptions.exit_multiple}x exit multiple used — implies ${fmtPct(result.implied_perpetuity_growth_from_exit_multiple)} perpetuity growth`}
+      <div>
+        {usingGordon
+          ? `Gordon growth used — implies a ${result.implied_exit_multiple_from_gordon ?? '—'}x exit multiple`
+          : `${result.assumptions.exit_multiple}x exit multiple used — implies ${fmtPct(result.implied_perpetuity_growth_from_exit_multiple)} perpetuity growth`}
+      </div>
+      {pctTerminal != null && <div>{fmtPct(pctTerminal)} of value is in the terminal value</div>}
+    </div>
+  )
+}
+
+// Compares the headline implied price against what the OTHER terminal
+// method would produce with self-consistent assumptions (see ScenarioForm's
+// sync logic) — a check that the growth story and the market-multiple story
+// roughly agree, not a second opinion on the business itself.
+function MethodAgreement({
+  startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, base,
+}: {
+  startingValue: number; shares: number; netDebt: number; includeBridge: boolean
+  dilutionRate: number; dilutionYears: number; base: any
+}) {
+  if (!base?.assumptions) return null
+  const flipped = { ...base.assumptions, terminal_method: base.terminal_method_used === 'gordon' ? 'exit_multiple' : 'gordon' }
+  const alt = runScenario(startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, flipped)
+  if (alt.error || base.implied_price == null || alt.implied_price == null) return null
+
+  const gordonPrice = base.terminal_method_used === 'gordon' ? base.implied_price : alt.implied_price
+  const exitPrice = base.terminal_method_used === 'gordon' ? alt.implied_price : base.implied_price
+  const diff = Math.abs(gordonPrice - exitPrice) / Math.max(gordonPrice, exitPrice)
+  const verdict = diff < 0.10
+    ? { label: 'Methods agree — valuation looks robust', color: 'text-emerald-400' }
+    : diff < 0.25
+      ? { label: 'Some divergence — worth reviewing assumptions', color: 'text-yellow-400' }
+      : { label: 'Methods diverge significantly — assumptions may be inconsistent', color: 'text-red-400' }
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-4">
+      <h3 className="text-xs font-semibold text-gray-300 mb-2">Method Agreement (Base Case)</h3>
+      <div className="grid grid-cols-2 gap-3 mb-2">
+        <Stat label="Perpetuity Method" value={fmtUsd(gordonPrice)} />
+        <Stat label="Exit Multiple Method" value={fmtUsd(exitPrice)} />
+      </div>
+      <p className={`text-xs font-medium ${verdict.color}`}>{verdict.label} ({fmtPct(diff)} apart)</p>
+    </div>
+  )
+}
+
+function ProjectionTable({ result, driverLabel }: { result: any; driverLabel: string }) {
+  if (!result?.projection?.length) return null
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="text-[9px] text-gray-600 uppercase tracking-wider">
+            <th className="text-left font-normal py-1 px-1">Year</th>
+            <th className="text-right font-normal py-1 px-1">Growth</th>
+            <th className="text-right font-normal py-1 px-1">{driverLabel}</th>
+            <th className="text-right font-normal py-1 px-1">Discount Factor</th>
+            <th className="text-right font-normal py-1 px-1">PV</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/30">
+          {result.projection.map((row: any) => (
+            <tr key={row.year}>
+              <td className="py-1 px-1 text-gray-300">{row.year}</td>
+              <td className="py-1 px-1 text-right text-gray-400 tabular-nums">{fmtPct(row.growth)}</td>
+              <td className="py-1 px-1 text-right text-gray-300 tabular-nums">{fmtBig(row.value)}</td>
+              <td className="py-1 px-1 text-right text-gray-500 tabular-nums">{(row.pv / row.value).toFixed(4)}</td>
+              <td className="py-1 px-1 text-right text-gray-300 tabular-nums">{fmtBig(row.pv)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -883,6 +996,26 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
         }
       : null
 
+  // For a historical run, recover the exact inputs that produced it (from
+  // the fundamentals snapshot + request stored alongside) rather than
+  // reusing today's live inputs — a past run's numbers were computed against
+  // whatever fundamentals existed at that time.
+  const methodCheckInputs = viewingRun
+    ? {
+        driverLabel: DRIVER_LABEL[viewingRun.dcf_outputs_json.driver as Driver],
+        startingValue: viewingRun.fundamentals_json?.[DRIVER_FIELD[viewingRun.dcf_outputs_json.driver as Driver]],
+        shares: viewingRun.fundamentals_json?.shares_outstanding,
+        netDebt: viewingRun.fundamentals_json?.net_debt ?? 0,
+        includeBridge: displayed?.base?.net_debt_bridge_applied ?? true,
+        dilutionRate: viewingRun.dcf_inputs_json?.dilution_rate ?? 0,
+        dilutionYears: viewingRun.dcf_inputs_json?.dilution_years ?? 0,
+      }
+    : {
+        driverLabel: DRIVER_LABEL[driver],
+        startingValue, shares, netDebt, includeBridge,
+        dilutionRate: dilutionRate / 100, dilutionYears,
+      }
+
   return (
     <div className="space-y-6">
       <button onClick={onBack} className="text-xs text-blue-400 hover:underline">← Back to Thesis</button>
@@ -978,6 +1111,25 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
               Diluted shares at horizon: {(displayed.base.diluted_shares / 1e6).toFixed(0)}M (from {(fundamentals.shares_outstanding / 1e6).toFixed(0)}M today)
             </div>
           )}
+
+          {methodCheckInputs.startingValue != null && methodCheckInputs.shares != null && (
+            <MethodAgreement
+              startingValue={methodCheckInputs.startingValue}
+              shares={methodCheckInputs.shares}
+              netDebt={methodCheckInputs.netDebt}
+              includeBridge={methodCheckInputs.includeBridge}
+              dilutionRate={methodCheckInputs.dilutionRate}
+              dilutionYears={methodCheckInputs.dilutionYears}
+              base={displayed.base}
+            />
+          )}
+
+          <div className="bg-card border border-border rounded-xl p-4">
+            <h3 className="text-xs font-semibold text-gray-300 mb-2">
+              Year-by-Year Projection (Base Case) — {methodCheckInputs.driverLabel}
+            </h3>
+            <ProjectionTable result={displayed.base} driverLabel={methodCheckInputs.driverLabel} />
+          </div>
 
           {!viewingRun && (
             <div className="flex items-center gap-3">

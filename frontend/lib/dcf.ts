@@ -71,12 +71,12 @@ function growthPath(s: ScenarioInputs): number[] {
   return path
 }
 
-function impliedMultipleFromGordon(terminalGrowth: number, discountRate: number): number | null {
+export function impliedMultipleFromGordon(terminalGrowth: number, discountRate: number): number | null {
   if (discountRate <= terminalGrowth) return null
   return (1 + terminalGrowth) / (discountRate - terminalGrowth)
 }
 
-function impliedGrowthFromMultiple(exitMultiple: number, discountRate: number): number | null {
+export function impliedGrowthFromMultiple(exitMultiple: number, discountRate: number): number | null {
   const denom = 1 + exitMultiple
   if (denom === 0) return null
   return (exitMultiple * discountRate - 1) / denom

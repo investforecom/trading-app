@@ -52,6 +52,10 @@ def fetch_fundamentals(ticker: str) -> dict:
 
         # ── DCF driver inputs ────────────────────────────────────────────
         "net_income_ttm": info.get("netIncomeToCommon"),
+        "net_income_cagr": _cagr(
+            [{"fiscal_year_end": r["fiscal_year_end"], "value": r["net_income"]} for r in income_statement_history],
+            "net_income",
+        ),
 
         # ── Reliability ──────────────────────────────────────────────────
         "revenue_ttm": revenue_ttm,
