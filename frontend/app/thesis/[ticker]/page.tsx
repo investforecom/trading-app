@@ -773,18 +773,35 @@ function ScenarioForm({ label, color, value, onChange }: {
     </label>
   )
 
+  const group = (title: string, children: React.ReactNode, first = false) => (
+    <div className={first ? '' : 'mt-2.5 pt-2.5 border-t border-border/40'}>
+      <div className="text-[9px] text-gray-600 uppercase tracking-wider mb-1">{title}</div>
+      {children}
+    </div>
+  )
+
   return (
-    <div className="bg-card border border-border rounded-xl p-3 space-y-2" style={{ borderTopColor: color, borderTopWidth: 2 }}>
-      <div className={`text-xs font-semibold ${color === '#f87171' ? 'text-red-400' : color === '#34d399' ? 'text-emerald-400' : 'text-gray-300'}`}>{label}</div>
-      <div className="grid grid-cols-2 gap-2">
-        {pct('stage1_growth', 'Stage 1 growth')}
-        {int('stage1_years', 'Stage 1 years')}
-        {pct('stage1_decay', 'Stage 1 decay (pp/yr)')}
-        {int('stage2_years', 'Stage 2 years (0=skip)')}
-      </div>
-      {value.stage2_years > 0 && pct('stage2_growth', 'Stage 2 growth')}
-      {value.terminal_method === 'gordon' ? pct('terminal_growth', 'Terminal growth') : multiple()}
-      {pct('discount_rate', 'Discount rate')}
+    <div className="bg-card border border-border rounded-xl p-3" style={{ borderTopColor: color, borderTopWidth: 2 }}>
+      <div className={`text-xs font-semibold mb-2 ${color === '#f87171' ? 'text-red-400' : color === '#34d399' ? 'text-emerald-400' : 'text-gray-300'}`}>{label}</div>
+
+      {group('Stage 1', (
+        <div className="grid grid-cols-2 gap-2">
+          {pct('stage1_growth', 'Growth')}
+          {int('stage1_years', 'Years')}
+          {pct('stage1_decay', 'Decay (pp/yr)')}
+        </div>
+      ), true)}
+
+      {group('Stage 2', (
+        <div className={value.stage2_years > 0 ? 'grid grid-cols-2 gap-2' : undefined}>
+          {int('stage2_years', 'Years (0 = skip)')}
+          {value.stage2_years > 0 && pct('stage2_growth', 'Growth')}
+        </div>
+      ))}
+
+      {group('Terminal Value', value.terminal_method === 'gordon' ? pct('terminal_growth', 'Terminal growth') : multiple())}
+
+      {group('Discount Rate', pct('discount_rate', 'Discount rate'))}
     </div>
   )
 }
@@ -837,13 +854,15 @@ function CommentaryCard({ label, text, color }: { label: string; text: string; c
   )
 }
 
-function DriverPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function DriverPill({ label, active, recommended, onClick }: { label: string; active: boolean; recommended?: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
+      title={recommended ? 'Recommended for this company' : undefined}
       className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${active ? 'bg-blue-600/20 text-blue-400' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'}`}
     >
       {label}
+      {recommended && <span className="ml-1 text-emerald-400">★</span>}
     </button>
   )
 }
@@ -958,6 +977,7 @@ function recommendDriver(f: any): { driver: Driver; reason: string } {
 
 function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fundamentals: any; thesis: any; onBack: () => void }) {
   const recommended = useMemo(() => recommendDriver(fundamentals), [fundamentals])
+  const thesisDriver = thesis ? GROWTH_BASIS_TO_DRIVER[thesis.growth_basis] : undefined
   const [driver, setDriver] = useState<Driver>(() => recommended.driver)
   const [terminalMethod, setTerminalMethod] = useState<'gordon' | 'exit_multiple'>('gordon')
   const [includeBridge, setIncludeBridge] = useState(true)
@@ -1086,6 +1106,16 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
         {driver !== recommended.driver && <span className="text-gray-500"> (currently viewing {DRIVER_LABEL[driver]})</span>}
       </div>
 
+      {thesis && thesisDriver && thesisDriver !== driver && (
+        <div className="bg-yellow-950/20 border border-yellow-900/50 rounded-lg px-3 py-2 text-[10px] text-yellow-500">
+          Heads up — the Thesis's growth call was about <strong>{thesis.growth_basis}</strong> ({thesis.growth_rate_pct}%),
+          but you're viewing the <strong>{DRIVER_LABEL[driver]}</strong> driver. Stage 1 growth below defaults to{' '}
+          {DRIVER_LABEL[driver]}'s own historical CAGR instead of the Thesis's number — switch to{' '}
+          <button onClick={() => changeDriver(thesisDriver)} className="underline hover:text-yellow-300">the {DRIVER_LABEL[thesisDriver]} driver</button>{' '}
+          to use the Thesis's {thesis.growth_rate_pct}% call directly, or edit Stage 1 growth manually below.
+        </div>
+      )}
+
       {thesis && (
         <div className="bg-card border border-border rounded-lg px-3 py-2 text-[10px] text-gray-500">
           Base case prefilled from the Thesis: <span className="text-gray-300">{thesis.stage}</span> stage,{' '}
@@ -1098,9 +1128,9 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex gap-1.5">
-            <DriverPill label="FCF" active={driver === 'fcf'} onClick={() => changeDriver('fcf')} />
-            <DriverPill label="Revenue" active={driver === 'revenue'} onClick={() => changeDriver('revenue')} />
-            <DriverPill label="Net Income" active={driver === 'net_income'} onClick={() => changeDriver('net_income')} />
+            <DriverPill label="FCF" active={driver === 'fcf'} recommended={recommended.driver === 'fcf'} onClick={() => changeDriver('fcf')} />
+            <DriverPill label="Revenue" active={driver === 'revenue'} recommended={recommended.driver === 'revenue'} onClick={() => changeDriver('revenue')} />
+            <DriverPill label="Net Income" active={driver === 'net_income'} recommended={recommended.driver === 'net_income'} onClick={() => changeDriver('net_income')} />
           </div>
           <div className="text-[10px] text-gray-600">
             Starting {DRIVER_LABEL[driver]}: <span className="text-gray-300">{startingValue != null ? fmtBig(startingValue) : 'not available — enter manually'}</span>
