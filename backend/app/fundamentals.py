@@ -19,6 +19,7 @@ def fetch_fundamentals(ticker: str) -> dict:
     revenue_history = _annual_history(t, "Total Revenue")
     shares_history = _annual_history(t, "Ordinary Shares Number", statement="balance_sheet")
     income_statement_history = _income_statement_history(t)
+    cash_flow_history = _cash_flow_history(t)
 
     # Own-history multiples and peer/sector medians are each a slow network
     # round trip (price history download / several peer .info calls) — run
@@ -38,6 +39,22 @@ def fetch_fundamentals(ticker: str) -> dict:
     ebitda = revenue_ttm * ebitda_margin if revenue_ttm and ebitda_margin else None
     net_debt_to_ebitda = net_debt / ebitda if ebitda else None
 
+    gross_margin = info.get("grossMargins")
+    operating_margin = info.get("operatingMargins")
+    gross_profit_ttm = revenue_ttm * gross_margin if revenue_ttm and gross_margin else None
+    operating_income_ttm = revenue_ttm * operating_margin if revenue_ttm and operating_margin else None
+
+    # Capex has no direct TTM field in yfinance. Deriving it as OCF_ttm -
+    # FCF_ttm looked elegant but doesn't reconcile in practice — Yahoo's TTM
+    # freeCashflow evidently uses a more conservative convention than plain
+    # OCF - Capex (checked against NVDA: the implied "capex" from that
+    # subtraction was ~13x the actual capex reported in the cash flow
+    # statement). Using the cash flow statement's own most-recent-FY capex
+    # instead — less current than true TTM, but numerically real.
+    operating_cashflow_ttm = info.get("operatingCashflow")
+    free_cashflow_ttm = info.get("freeCashflow")
+    capex_ttm = cash_flow_history[-1]["capex"] if cash_flow_history else None
+
     return {
         "ticker": ticker.upper(),
         "long_name": info.get("longName") or info.get("shortName") or ticker.upper(),
@@ -52,26 +69,35 @@ def fetch_fundamentals(ticker: str) -> dict:
 
         # ── DCF driver inputs ────────────────────────────────────────────
         "net_income_ttm": info.get("netIncomeToCommon"),
-        "net_income_cagr": _cagr(
-            [{"fiscal_year_end": r["fiscal_year_end"], "value": r["net_income"]} for r in income_statement_history],
-            "net_income",
-        ),
+        "net_income_cagr": _cagr(_pluck(income_statement_history, "net_income"), "net_income"),
 
-        # ── Reliability ──────────────────────────────────────────────────
+        # ── Reliability (income statement growth) ─────────────────────────
         "revenue_ttm": revenue_ttm,
         "revenue_growth_yoy": info.get("revenueGrowth"),
         "revenue_history": revenue_history,
         "revenue_cagr": _cagr(revenue_history, "revenue"),
+        "gross_profit_ttm": gross_profit_ttm,
+        "gross_profit_cagr": _cagr(_pluck(income_statement_history, "gross_profit"), "gross_profit"),
+        "operating_income_ttm": operating_income_ttm,
+        "operating_income_cagr": _cagr(_pluck(income_statement_history, "operating_income"), "operating_income"),
         "income_statement_history": income_statement_history,
         "analyst_recommendation": info.get("recommendationKey"),
         "number_of_analysts": info.get("numberOfAnalystOpinions"),
 
+        # ── Cash conversion ────────────────────────────────────────────────
+        "operating_cashflow_ttm": operating_cashflow_ttm,
+        "operating_cashflow_cagr": _cagr(_pluck(cash_flow_history, "operating_cash_flow"), "ocf"),
+        "capex_ttm": capex_ttm,
+        "capex_cagr": _cagr(_pluck(cash_flow_history, "capex"), "capex"),
+        "fcf_cagr": _cagr(_pluck(cash_flow_history, "fcf"), "fcf"),
+        "cash_flow_history": cash_flow_history,
+
         # ── Profitability & efficiency ───────────────────────────────────
-        "gross_margin": info.get("grossMargins"),
-        "operating_margin": info.get("operatingMargins"),
+        "gross_margin": gross_margin,
+        "operating_margin": operating_margin,
         "ebitda_margin": ebitda_margin,
         "profit_margin": info.get("profitMargins"),
-        "free_cashflow": info.get("freeCashflow"),
+        "free_cashflow": free_cashflow_ttm,
         "return_on_equity": info.get("returnOnEquity"),
         "return_on_assets": info.get("returnOnAssets"),
 
@@ -166,6 +192,41 @@ def _income_statement_history(t: "yf.Ticker") -> list[dict]:
             if any(v is None or v != v for v in values.values()):  # NaN check
                 continue
             out.append({"fiscal_year_end": str(col.date()), **{k: float(v) for k, v in values.items()}})
+        return out
+    except Exception:
+        return []
+
+
+def _pluck(history: list[dict], field: str) -> list[dict]:
+    """Extract one field from a multi-field history list into the {fiscal_year_end, value} shape _cagr/_yoy expect."""
+    return [{"fiscal_year_end": r["fiscal_year_end"], "value": r[field]} for r in history]
+
+
+def _cash_flow_history(t: "yf.Ticker") -> list[dict]:
+    """Operating cash flow, capex, and FCF together, oldest first — the
+    quality-screen Cash subsection's chart. Capex shown as a positive
+    magnitude (the cash flow statement reports it negative). Only years with
+    all three present."""
+    rows = {
+        "operating_cash_flow": "Operating Cash Flow",
+        "capex": "Capital Expenditure",
+        "fcf": "Free Cash Flow",
+    }
+    try:
+        cf = t.cashflow
+        if cf is None or cf.empty or any(name not in cf.index for name in rows.values()):
+            return []
+        out = []
+        for col in sorted(cf.columns):
+            values = {key: cf.loc[name, col] for key, name in rows.items()}
+            if any(v is None or v != v for v in values.values()):  # NaN check
+                continue
+            out.append({
+                "fiscal_year_end": str(col.date()),
+                "operating_cash_flow": float(values["operating_cash_flow"]),
+                "capex": abs(float(values["capex"])),
+                "fcf": float(values["fcf"]),
+            })
         return out
     except Exception:
         return []

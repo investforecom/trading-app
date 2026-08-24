@@ -174,16 +174,10 @@ function HistoryBars({ history, accent, unit }: { history: { fiscal_year_end: st
   )
 }
 
-function IncomeStatementChart({ data }: {
-  data: { fiscal_year_end: string; revenue: number; gross_profit: number; operating_income: number; net_income: number }[]
-}) {
+interface ChartSeries { key: string; label: string; color: string }
+
+function GroupedBarChart({ data, series }: { data: Record<string, any>[]; series: ChartSeries[] }) {
   if (!data || data.length < 2) return null
-  const series: { key: 'revenue' | 'gross_profit' | 'operating_income' | 'net_income'; label: string; color: string }[] = [
-    { key: 'revenue', label: 'Revenue', color: '#60a5fa' },
-    { key: 'gross_profit', label: 'Gross Profit', color: '#34d399' },
-    { key: 'operating_income', label: 'Op. Income', color: '#fbbf24' },
-    { key: 'net_income', label: 'Net Income', color: '#f472b6' },
-  ]
   const allValues = data.flatMap((d) => series.map((s) => d[s.key]))
   const min = Math.min(0, ...allValues)
   const max = Math.max(...allValues)
@@ -229,11 +223,16 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
   const fcfMargin = f.revenue_ttm && f.free_cashflow != null ? f.free_cashflow / f.revenue_ttm : null
   const analystUpside = f.current_price && f.analyst_target_mean ? (f.analyst_target_mean / f.current_price) - 1 : null
 
-  // Reliability
+  // Reliability (income statement growth)
   const rGrowth = rateAbove(f.revenue_growth_yoy, 0.15, 0)
   const rCagr = rateAbove(f.revenue_cagr, 0.15, 0)
-  const rCoverage = rateAbove(f.number_of_analysts, 15, 5)
-  const rBeta = rateBelow(f.beta, 1.2, 1.8)
+  const rGrossProfitCagr = rateAbove(f.gross_profit_cagr, 0.15, 0)
+  const rOperatingIncomeCagr = rateAbove(f.operating_income_cagr, 0.15, 0)
+  const rNetIncomeCagr = rateAbove(f.net_income_cagr, 0.15, 0)
+
+  // Cash conversion
+  const rOcfCagr = rateAbove(f.operating_cashflow_cagr, 0.15, 0)
+  const rFcfCagr = rateAbove(f.fcf_cagr, 0.15, 0)
 
   // Profitability & efficiency
   const rGross = rateAbove(f.gross_margin, 0.5, 0.3)
@@ -278,14 +277,42 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
         <SubsectionCard
           title="Is the business reliable?"
           accent="#3b82f6"
-          description="Consistent, well-understood growth — not lumpy, not a black box."
-          verdictInfo={verdict([rGrowth, rCagr, rCoverage, rBeta])}
+          description="Consistent, well-understood growth across the whole income statement — not lumpy, not a black box."
+          verdictInfo={verdict([rGrowth, rCagr, rGrossProfitCagr, rOperatingIncomeCagr, rNetIncomeCagr])}
         >
-          <MetricRow label="Revenue growth (YoY)" value={fmtPct(f.revenue_growth_yoy, true)} rating={rGrowth} hint="How fast sales grew over the last year" />
+          <MetricRow label="Revenue TTM" value={fmtBig(f.revenue_ttm)} rating="na" hint="Trailing twelve months" />
           <MetricRow label={`Revenue CAGR (${f.revenue_history?.length ? f.revenue_history.length - 1 : '—'}yr)`} value={fmtPct(f.revenue_cagr, true)} rating={rCagr} hint="Compounded growth across available history — smooths one-off spikes" />
-          <MetricRow label="Analyst coverage" value={f.number_of_analysts != null ? `${f.number_of_analysts} analysts` : '—'} rating={rCoverage} hint="More coverage generally means more reliable consensus estimates" />
-          <MetricRow label="Price volatility (beta)" value={f.beta != null ? f.beta.toFixed(2) : '—'} rating={rBeta} hint="Swings vs. the market — 1.0 = same as market" />
-          <IncomeStatementChart data={f.income_statement_history} />
+          <MetricRow label="Gross Profit TTM" value={fmtBig(f.gross_profit_ttm)} rating="na" hint="Revenue minus cost of goods sold" />
+          <MetricRow label="Gross Profit CAGR" value={fmtPct(f.gross_profit_cagr, true)} rating={rGrossProfitCagr} hint="Is pricing power/scale keeping pace with revenue?" />
+          <MetricRow label="Operating Income TTM" value={fmtBig(f.operating_income_ttm)} rating="na" hint="Profit from running the business, before interest/tax" />
+          <MetricRow label="Op Income CAGR" value={fmtPct(f.operating_income_cagr, true)} rating={rOperatingIncomeCagr} hint="Is operating leverage improving or eroding?" />
+          <MetricRow label="Net Income TTM" value={fmtBig(f.net_income_ttm)} rating="na" hint="Trailing twelve months" />
+          <MetricRow label="Net Income CAGR" value={fmtPct(f.net_income_cagr, true)} rating={rNetIncomeCagr} hint="Bottom-line growth across available history" />
+          <GroupedBarChart data={f.income_statement_history} series={[
+            { key: 'revenue', label: 'Revenue', color: '#60a5fa' },
+            { key: 'gross_profit', label: 'Gross Profit', color: '#34d399' },
+            { key: 'operating_income', label: 'Op. Income', color: '#fbbf24' },
+            { key: 'net_income', label: 'Net Income', color: '#f472b6' },
+          ]} />
+        </SubsectionCard>
+
+        <SubsectionCard
+          title="Does the business convert profit into cash?"
+          accent="#22d3ee"
+          description="Reported profit means little if it never shows up as cash — this catches the gap."
+          verdictInfo={verdict([rOcfCagr, rFcfCagr])}
+        >
+          <MetricRow label="Op Cash Flow TTM" value={fmtBig(f.operating_cashflow_ttm)} rating="na" hint="Cash generated by core operations" />
+          <MetricRow label="Op Cash Flow CAGR" value={fmtPct(f.operating_cashflow_cagr, true)} rating={rOcfCagr} hint="Is cash generation growing with the business?" />
+          <MetricRow label="Capex (latest FY)" value={fmtBig(f.capex_ttm)} rating="na" hint="Cash spent on property/equipment — no true TTM figure available, most recent fiscal year shown" />
+          <MetricRow label="Capex CAGR" value={fmtPct(f.capex_cagr, true)} rating="na" hint="Trend in reinvestment — faster isn't inherently good or bad, depends on what it's funding" />
+          <MetricRow label="FCF TTM" value={fmtBig(f.free_cashflow)} rating="na" hint="Operating cash flow minus capex — cash actually left over" />
+          <MetricRow label="FCF CAGR" value={fmtPct(f.fcf_cagr, true)} rating={rFcfCagr} hint="Hardest metric to fake — the cleanest cash-conversion growth signal" />
+          <GroupedBarChart data={f.cash_flow_history} series={[
+            { key: 'operating_cash_flow', label: 'Op. Cash Flow', color: '#60a5fa' },
+            { key: 'capex', label: 'Capex', color: '#f87171' },
+            { key: 'fcf', label: 'FCF', color: '#34d399' },
+          ]} />
         </SubsectionCard>
 
         <SubsectionCard
@@ -621,10 +648,12 @@ function defaultScenarios(f: any, driver: Driver): { bear: Scenario; base: Scena
 // own historical growth.
 const GROWTH_BASIS_TO_DRIVER: Record<string, Driver> = { FCF: 'fcf', Sales: 'revenue', Earnings: 'net_income' }
 
+// Each driver's own historical CAGR — a real, driver-specific growth signal
+// now that fundamentals fetches FCF/revenue/net income history independently
+// (previously FCF had no history of its own and fell back to revenue growth).
 function driverGrowthFallback(f: any, driver: Driver): number {
-  if (driver === 'revenue') return f?.revenue_growth_yoy ?? 0.10
-  if (driver === 'net_income') return Math.min(Math.max(f?.net_income_cagr ?? f?.revenue_growth_yoy ?? 0.10, -0.05), 0.60)
-  return f?.revenue_growth_yoy ?? 0.10  // fcf: no FCF history fetched yet — revenue growth is the closest available proxy
+  const cagr = driver === 'revenue' ? f?.revenue_cagr : driver === 'net_income' ? f?.net_income_cagr : f?.fcf_cagr
+  return Math.min(Math.max(cagr ?? f?.revenue_growth_yoy ?? 0.10, -0.05), 0.60)
 }
 
 // Stage 1 = the Thesis's headline growth call, when it's about the selected
@@ -896,15 +925,42 @@ function ProjectionTable({ result, driverLabel }: { result: any; driverLabel: st
   )
 }
 
+// The gate between Thesis and DCF: which driver actually fits this company,
+// decided mechanically from data already fetched — no AI, no network call.
+// Financials get Net Income (FCF/capex isn't a meaningful driver there);
+// real positive FCF gets the direct, standard FCF approach; negative/absent
+// FCF with real growth gets Revenue (a perpetuity off negative cash flow
+// isn't coherent); anything else falls back to Revenue with a caveat.
+function recommendDriver(f: any): { driver: Driver; reason: string } {
+  const sectorIndustry = `${f?.sector ?? ''} ${f?.industry ?? ''}`.toLowerCase()
+  const isFinancial = ['bank', 'insurance', 'capital markets', 'asset management', 'financial services'].some((k) => sectorIndustry.includes(k))
+  if (isFinancial) {
+    return { driver: 'net_income', reason: `${f?.industry ?? f?.sector ?? 'This sector'}: FCF/capex isn't a meaningful valuation driver — net income is standard.` }
+  }
+
+  const fcf = f?.free_cashflow
+  if (fcf != null && fcf > 0) {
+    return { driver: 'fcf', reason: `Free cash flow is positive (${fmtBig(fcf)} TTM) — the most direct, standard approach.` }
+  }
+
+  const revGrowth = f?.revenue_growth_yoy
+  if (revGrowth != null && revGrowth > 0.15) {
+    return { driver: 'revenue', reason: `FCF is negative or unavailable, but revenue is growing ${fmtPct(revGrowth)} YoY — a revenue-multiple approach avoids modeling a perpetuity off negative cash flow.` }
+  }
+
+  return { driver: 'revenue', reason: 'FCF is negative or unavailable and growth is modest — revenue is the most stable available base, though this case deserves extra scrutiny.' }
+}
+
 function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fundamentals: any; thesis: any; onBack: () => void }) {
-  const [driver, setDriver] = useState<Driver>('fcf')
+  const recommended = useMemo(() => recommendDriver(fundamentals), [fundamentals])
+  const [driver, setDriver] = useState<Driver>(() => recommended.driver)
   const [terminalMethod, setTerminalMethod] = useState<'gordon' | 'exit_multiple'>('gordon')
   const [includeBridge, setIncludeBridge] = useState(true)
   const [dilutionRate, setDilutionRate] = useState(0)  // %, e.g. 2 for 2%/yr
   const [dilutionYears, setDilutionYears] = useState(0)
 
   const buildDefaults = (d: Driver) => (thesis ? defaultScenariosFromThesis(thesis, fundamentals, d) : defaultScenarios(fundamentals, d))
-  const [scenarios, setScenarios] = useState<{ bear: Scenario; base: Scenario; bull: Scenario }>(() => buildDefaults('fcf'))
+  const [scenarios, setScenarios] = useState<{ bear: Scenario; base: Scenario; bull: Scenario }>(() => buildDefaults(recommended.driver))
 
   const [history, setHistory] = useState<any[]>([])
   const [viewingRun, setViewingRun] = useState<any>(null)
@@ -1019,6 +1075,11 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
   return (
     <div className="space-y-6">
       <button onClick={onBack} className="text-xs text-blue-400 hover:underline">← Back to Thesis</button>
+
+      <div className="bg-blue-950/20 border border-blue-900/50 rounded-lg px-3 py-2 text-[10px] text-blue-300">
+        Recommended model: <strong className="text-blue-200">{DRIVER_LABEL[recommended.driver]}</strong> — {recommended.reason}
+        {driver !== recommended.driver && <span className="text-gray-500"> (currently viewing {DRIVER_LABEL[driver]})</span>}
+      </div>
 
       {thesis && (
         <div className="bg-card border border-border rounded-lg px-3 py-2 text-[10px] text-gray-500">
