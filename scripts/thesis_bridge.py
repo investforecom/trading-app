@@ -42,6 +42,14 @@ Classify the company into exactly one stage:
 - Stabilization: growth decelerating, margins/moat maturing, competitive position settling
 - Mature: low growth, capital return focus, moat largely established or eroding
 
+Before setting growth_rate_pct: look up the growth_basis driver's own historical YoY growth and \
+multi-year CAGR in the fundamentals (fcf_yoy/fcf_cagr, revenue_growth_yoy/revenue_cagr, or \
+net_income_yoy/net_income_cagr — whichever matches growth_basis). A company's historical \
+hypergrowth rate is rarely sustainable forward unchanged — the base gets larger, competition \
+responds, markets saturate — so growth_rate_pct is usually a real haircut below both figures, \
+not equal to either one. State both historical numbers explicitly and justify the haircut (or \
+the lack of one, if the historical pace genuinely looks sustainable) in growth_rate_reasoning.
+
 Respond with ONLY a single fenced json code block (```json ... ```) matching this schema — \
 no text before or after the fence:
 {
@@ -55,6 +63,7 @@ no text before or after the fence:
   "stage_reason": "1 sentence justifying the stage classification",
   "growth_basis": "FCF | Earnings | Sales",
   "growth_rate_pct": 25,
+  "growth_rate_reasoning": "1-2 sentences: state the driver's own historical YoY and CAGR (e.g. 'FCF YoY is 59%, CAGR is 194%'), then justify why growth_rate_pct is set below/at them — cite the specific mean-reversion/base-effect/competitive logic, not just an assertion",
   "growth_years": 5,
   "normalized_growth_pct": 6,
   "thesis_text": "Exactly 2 short, plain sentences: (1) 'The business is in the <Stage> stage and should compound <growth_basis> at roughly <growth_rate_pct>% annually for the next <growth_years> years before normalizing to <normalized_growth_pct>%.' (2) ONE short sentence (max ~20 words) citing the single strongest supporting data point — not a list of several figures.",
@@ -132,7 +141,8 @@ def _run_and_validate(prompt: str, allowed_tools: str, max_turns: str, required:
 THESIS_QA_REQUIRED = [
     "demand", "moat", "moat_trend", "moat_trend_reason", "numbers_support_story",
     "numbers_support_reason", "stage", "stage_reason", "growth_basis", "growth_rate_pct",
-    "growth_years", "normalized_growth_pct", "thesis_text", "main_risks", "catalysts", "sources_used",
+    "growth_rate_reasoning", "growth_years", "normalized_growth_pct", "thesis_text",
+    "main_risks", "catalysts", "sources_used",
 ]
 DCF_THESIS_REQUIRED = ["thesis_text", "top_risks", "scenario_commentary", "target_price"]
 

@@ -517,6 +517,12 @@ function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf, onThesisChange
             <h3 className="text-xs font-semibold text-gray-300 mb-1.5">Thesis</h3>
             <p className="text-sm text-gray-100 leading-relaxed">{displayed.thesis_text}</p>
             <p className="text-[10px] text-gray-600 mt-2">{displayed.stage_reason}</p>
+            {displayed.growth_rate_reasoning && (
+              <p className="text-[10px] text-gray-500 mt-2 pt-2 border-t border-border/40">
+                <span className="text-gray-400 font-medium">Why {displayed.growth_rate_pct}%, not the raw historical rate: </span>
+                {displayed.growth_rate_reasoning}
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
