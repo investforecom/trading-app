@@ -295,6 +295,10 @@ def generate(ticker: str, body: GenerateBody):
     except Exception as exc:
         raise HTTPException(502, f"Thesis generation failed: {exc}")
 
+    missing = [k for k in ("thesis_text", "top_risks", "scenario_commentary", "target_price") if k not in ai_result]
+    if missing:
+        raise HTTPException(502, f"Thesis generation returned an incomplete response — missing {', '.join(missing)}")
+
     row = query_one("""
         INSERT INTO investment_theses (
             owner_id, ticker, current_price,

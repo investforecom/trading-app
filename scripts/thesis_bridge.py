@@ -110,6 +110,33 @@ def _extract_json(text: str) -> dict:
     return json.loads(match.group(1))
 
 
+# The CLI has no structured-output schema enforcement (unlike the SDK's
+# output_config.format we used before) — Claude occasionally drops a
+# required key from the fenced JSON. Validate and retry once before giving
+# up, rather than letting a malformed response crash the caller.
+def _run_and_validate(prompt: str, allowed_tools: str, max_turns: str, required: list[str], task: str) -> dict:
+    last_error: Exception = RuntimeError("unreachable")
+    for attempt in range(2):
+        try:
+            output = _run_claude(prompt, allowed_tools, max_turns)
+            data = _extract_json(output)
+            missing = [k for k in required if k not in data]
+            if missing:
+                raise ValueError(f"{task} response missing required fields: {', '.join(missing)}")
+            return data
+        except (ValueError, json.JSONDecodeError) as exc:
+            last_error = exc
+    raise last_error
+
+
+THESIS_QA_REQUIRED = [
+    "demand", "moat", "moat_trend", "moat_trend_reason", "numbers_support_story",
+    "numbers_support_reason", "stage", "stage_reason", "growth_basis", "growth_rate_pct",
+    "growth_years", "normalized_growth_pct", "thesis_text", "main_risks", "catalysts", "sources_used",
+]
+DCF_THESIS_REQUIRED = ["thesis_text", "top_risks", "scenario_commentary", "target_price"]
+
+
 def handle_thesis_qa(req: dict) -> dict:
     ticker = req["ticker"]
     fundamentals = req["fundamentals"]
@@ -122,8 +149,7 @@ Quality Screen fundamentals:
 {json.dumps(fundamentals, indent=2, default=str)}
 
 Answer the business questions and produce the growth thesis."""
-    output = _run_claude(prompt, allowed_tools="WebSearch", max_turns="8")
-    return _extract_json(output)
+    return _run_and_validate(prompt, allowed_tools="WebSearch", max_turns="8", required=THESIS_QA_REQUIRED, task="thesis_qa")
 
 
 def handle_dcf_thesis(req: dict) -> dict:
@@ -143,8 +169,7 @@ DCF output (bear/base/bull implied prices + assumptions, computed by the user's 
 Current price: {fundamentals.get("current_price")}
 
 Write the investment thesis."""
-    output = _run_claude(prompt, allowed_tools="", max_turns="2")
-    return _extract_json(output)
+    return _run_and_validate(prompt, allowed_tools="", max_turns="2", required=DCF_THESIS_REQUIRED, task="dcf_thesis")
 
 
 TASKS = {"thesis_qa": handle_thesis_qa, "dcf_thesis": handle_dcf_thesis}
