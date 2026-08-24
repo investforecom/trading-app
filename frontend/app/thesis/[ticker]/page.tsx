@@ -595,9 +595,12 @@ function defaultScenarios(f: any, driver: Driver): { bear: Scenario; base: Scena
   const baseGrowth = f?.revenue_growth_yoy ?? 0.10
   const isRevenue = driver === 'revenue'
   const defaultMultiple = f?.peer_benchmark?.median_ps ?? 5
+  // Terminal growth must stay well below the discount rate for Gordon growth
+  // to be valid — always leave at least a 2pp spread.
+  const safeTerminal = (wanted: number, discountRate: number) => Math.min(Math.max(wanted, 0.01), discountRate - 0.02)
   const mk = (growth: number, discountRate: number, terminalGrowth: number, multiple: number): Scenario => ({
     stage1_growth: growth, stage1_decay: 0.02, stage1_years: 5, stage2_growth: 0, stage2_years: 0,
-    terminal_growth: Math.max(terminalGrowth, 0.01),
+    terminal_growth: safeTerminal(terminalGrowth, discountRate),
     terminal_method: isRevenue ? 'exit_multiple' : 'gordon',
     exit_multiple: isRevenue ? Math.max(multiple, 1) : null,
     discount_rate: discountRate,
@@ -609,33 +612,41 @@ function defaultScenarios(f: any, driver: Driver): { bear: Scenario; base: Scena
   }
 }
 
-// Builds directly on the Thesis stage's growth call: flat stage1_growth for
-// growth_years, then straight to terminal_growth = normalized_growth_pct (the
-// thesis text describes a flat rate stepping down to a normalized one, not a
-// gradual fade, so no decay/second stage here). Bear/bull are offsets from it.
+// Stage 1 = the Thesis's headline growth call (growth_rate_pct for
+// growth_years). The Thesis's "normalized" growth is a business concept —
+// for a strong long-term compounder it can legitimately be well above a
+// perpetuity rate — so it feeds a realistic Stage 2 follow-on window, not
+// the DCF's terminal rate directly. Terminal growth is always kept
+// conservative and safely below the discount rate, which Gordon growth
+// requires mathematically. Bear/bull are offsets from the base case.
 function defaultScenariosFromThesis(thesis: any, f: any, driver: Driver): { bear: Scenario; base: Scenario; bull: Scenario } {
-  const baseGrowth = (thesis?.growth_rate_pct ?? 10) / 100
-  const terminalGrowth = (thesis?.normalized_growth_pct ?? 5) / 100
-  const years = thesis?.growth_years ?? 5
+  const stage1Growth = (thesis?.growth_rate_pct ?? 10) / 100
+  const stage2Growth = (thesis?.normalized_growth_pct ?? 5) / 100
+  const stage1Years = thesis?.growth_years ?? 5
+  const stage2Years = 5
   const isRevenue = driver === 'revenue'
   const defaultMultiple = f?.peer_benchmark?.median_ps ?? 5
+  const safeTerminal = (discountRate: number) => Math.min(0.025, discountRate - 0.02)
 
-  const mk = (growthDelta: number, discountRate: number, tgDelta: number, multipleDelta: number): Scenario => ({
-    stage1_growth: Math.max(baseGrowth + growthDelta, -0.05),
-    stage1_decay: 0,
-    stage1_years: years,
-    stage2_growth: 0,
-    stage2_years: 0,
-    terminal_growth: Math.max(terminalGrowth + tgDelta, 0.01),
-    terminal_method: isRevenue ? 'exit_multiple' : 'gordon',
-    exit_multiple: isRevenue ? Math.max(defaultMultiple + multipleDelta, 1) : null,
-    discount_rate: discountRate,
-  })
+  const mk = (growthDelta: number, discountRate: number, stage2Delta: number, multipleDelta: number): Scenario => {
+    const terminalGrowth = safeTerminal(discountRate)
+    return {
+      stage1_growth: Math.max(stage1Growth + growthDelta, -0.05),
+      stage1_decay: 0,
+      stage1_years: stage1Years,
+      stage2_growth: Math.max(stage2Growth + stage2Delta, terminalGrowth + 0.005),
+      stage2_years: stage2Years,
+      terminal_growth: terminalGrowth,
+      terminal_method: isRevenue ? 'exit_multiple' : 'gordon',
+      exit_multiple: isRevenue ? Math.max(defaultMultiple + multipleDelta, 1) : null,
+      discount_rate: discountRate,
+    }
+  }
 
   return {
-    bear: mk(-0.15, 0.11, -0.01, -3),
+    bear: mk(-0.15, 0.11, -0.02, -3),
     base: mk(0, 0.09, 0, 0),
-    bull: mk(0.15, 0.08, 0.01, 3),
+    bull: mk(0.15, 0.08, 0.02, 3),
   }
 }
 
@@ -896,7 +907,7 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
           disabled={generating}
           className="mt-3 px-4 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors disabled:opacity-40"
         >
-          {generating ? 'Generating…' : 'Generate Thesis'}
+          {generating ? 'Generating…' : 'Generate DCF'}
         </button>
         {genError && <p className="text-xs text-red-400 mt-2">{genError}</p>}
       </div>
