@@ -613,16 +613,20 @@ function defaultScenariosFromThesis(thesis: any, f: any): { years: number; bear:
 function ScenarioForm({ label, color, value, onChange }: {
   label: string; color: string; value: Scenario; onChange: (s: Scenario) => void
 }) {
-  const field = (key: keyof Scenario, fieldLabel: string, step = 0.01) => (
+  // Scenario values are stored as decimals (0.15) but edited as percentages (15).
+  const field = (key: keyof Scenario, fieldLabel: string, step = 0.5) => (
     <label className="block">
       <span className="text-[10px] text-gray-600">{fieldLabel}</span>
-      <input
-        type="number"
-        step={step}
-        value={value[key]}
-        onChange={(e) => onChange({ ...value, [key]: parseFloat(e.target.value) || 0 })}
-        className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-100 mt-0.5 focus:outline-none focus:border-blue-500"
-      />
+      <div className="relative mt-0.5">
+        <input
+          type="number"
+          step={step}
+          value={Math.round(value[key] * 1000) / 10}
+          onChange={(e) => onChange({ ...value, [key]: (parseFloat(e.target.value) || 0) / 100 })}
+          className="w-full bg-surface border border-border rounded px-2 py-1 pr-5 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+        />
+        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-600 pointer-events-none">%</span>
+      </div>
     </label>
   )
   return (
