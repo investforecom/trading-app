@@ -129,6 +129,55 @@ function HistoryBars({ history, accent, unit }: { history: { fiscal_year_end: st
   )
 }
 
+function IncomeStatementChart({ data }: {
+  data: { fiscal_year_end: string; revenue: number; gross_profit: number; operating_income: number; net_income: number }[]
+}) {
+  if (!data || data.length < 2) return null
+  const series: { key: 'revenue' | 'gross_profit' | 'operating_income' | 'net_income'; label: string; color: string }[] = [
+    { key: 'revenue', label: 'Revenue', color: '#60a5fa' },
+    { key: 'gross_profit', label: 'Gross Profit', color: '#34d399' },
+    { key: 'operating_income', label: 'Op. Income', color: '#fbbf24' },
+    { key: 'net_income', label: 'Net Income', color: '#f472b6' },
+  ]
+  const allValues = data.flatMap((d) => series.map((s) => d[s.key]))
+  const min = Math.min(0, ...allValues)
+  const max = Math.max(...allValues)
+  const range = max - min || 1
+  return (
+    <div className="px-4 pb-3 pt-2">
+      <div className="flex items-end gap-3 h-28">
+        {data.map((d, i) => (
+          <div key={i} className="flex-1 flex flex-col items-center gap-1 h-full justify-end">
+            <div className="w-full flex items-end justify-center gap-0.5 h-full">
+              {series.map((s) => {
+                const v = d[s.key]
+                const heightPct = Math.max(((v - min) / range) * 100, 2)
+                return (
+                  <div
+                    key={s.key}
+                    className="flex-1 rounded-t"
+                    style={{ height: `${heightPct}%`, backgroundColor: s.color, opacity: 0.8 }}
+                    title={`${s.label} ${d.fiscal_year_end.slice(0, 4)}: ${fmtBig(v)}`}
+                  />
+                )
+              })}
+            </div>
+            <span className="text-[9px] text-gray-600 whitespace-nowrap">{d.fiscal_year_end.slice(0, 4)}</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-3 justify-center mt-2 flex-wrap">
+        {series.map((s) => (
+          <div key={s.key} className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ backgroundColor: s.color }} />
+            <span className="text-[9px] text-gray-500">{s.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Quality Screen ───────────────────────────────────────────────────────────
 
 function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
@@ -149,6 +198,13 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
   const rFcf = rateAbove(fcfMargin, 0.15, 0.05)
   const rRoe = rateAbove(f.return_on_equity, 0.20, 0.10)
   const rRoa = rateAbove(f.return_on_assets, 0.10, 0.05)
+
+  // Debt & liquidity
+  const rDebtToEquity = rateBelow(f.debt_to_equity_pct, 40, 100)
+  const rCurrentRatio = rateAbove(f.current_ratio, 1.5, 1.0)
+  const rQuickRatio = rateAbove(f.quick_ratio, 1.0, 0.7)
+  const rNetDebtEbitda = rateBelow(f.net_debt_to_ebitda, 1, 3)
+  const rInterestCoverage = f.interest_coverage == null ? 'good' : rateAbove(f.interest_coverage, 8, 3)
 
   // Dilution
   const rDilutionYoy = rateDilution(f.shares_yoy)
@@ -176,7 +232,7 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
           <MetricRow label={`Revenue CAGR (${f.revenue_history?.length ? f.revenue_history.length - 1 : '—'}yr)`} value={fmtPct(f.revenue_cagr, true)} rating={rCagr} hint="Compounded growth across available history — smooths one-off spikes" />
           <MetricRow label="Analyst coverage" value={f.number_of_analysts != null ? `${f.number_of_analysts} analysts` : '—'} rating={rCoverage} hint="More coverage generally means more reliable consensus estimates" />
           <MetricRow label="Price volatility (beta)" value={f.beta != null ? f.beta.toFixed(2) : '—'} rating={rBeta} hint="Swings vs. the market — 1.0 = same as market" />
-          <HistoryBars history={f.revenue_history} accent="#3b82f6" unit="big" />
+          <IncomeStatementChart data={f.income_statement_history} />
         </SubsectionCard>
 
         <SubsectionCard
@@ -192,6 +248,20 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
           <MetricRow label="FCF margin" value={fmtPct(fcfMargin)} rating={rFcf} hint="Actual cash generated per dollar of revenue — hardest to fake" />
           <MetricRow label="Return on equity" value={fmtPct(f.return_on_equity)} rating={rRoe} hint="Profit generated per dollar of shareholder capital" />
           <MetricRow label="Return on assets" value={fmtPct(f.return_on_assets)} rating={rRoa} hint="Profit generated per dollar of total assets" />
+        </SubsectionCard>
+
+        <SubsectionCard
+          title="Is the balance sheet healthy?"
+          accent="#fb923c"
+          description="How much debt the business carries, and how easily it could cover it."
+          verdictInfo={verdict([rDebtToEquity, rCurrentRatio, rQuickRatio, rNetDebtEbitda, rInterestCoverage])}
+        >
+          <MetricRow label="Net debt (cash if negative)" value={fmtBig(f.net_debt)} rating="na" hint="Total debt minus cash on hand" />
+          <MetricRow label="Net debt / EBITDA" value={fmtRatio(f.net_debt_to_ebitda)} rating={rNetDebtEbitda} hint="Years of cash flow needed to pay off net debt" />
+          <MetricRow label="Debt / Equity" value={f.debt_to_equity_pct != null ? `${f.debt_to_equity_pct.toFixed(1)}%` : '—'} rating={rDebtToEquity} hint="Debt as a share of shareholder equity" />
+          <MetricRow label="Current ratio" value={fmtRatio(f.current_ratio)} rating={rCurrentRatio} hint="Short-term assets vs. short-term liabilities — above 1x covers them" />
+          <MetricRow label="Quick ratio" value={fmtRatio(f.quick_ratio)} rating={rQuickRatio} hint="Same, excluding inventory — a stricter cash-coverage test" />
+          <MetricRow label="Interest coverage" value={f.interest_coverage != null ? fmtRatio(f.interest_coverage) : '— (negligible debt)'} rating={rInterestCoverage} hint="EBIT vs. interest expense — how easily profit covers interest payments" />
         </SubsectionCard>
 
         <SubsectionCard
