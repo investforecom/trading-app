@@ -60,6 +60,22 @@ function rateDilution(v: number | null | undefined): Rating {
   if (v == null || Number.isNaN(v)) return 'na'
   return v < 0 ? 'good' : v <= 0.02 ? 'neutral' : 'bad'
 }
+function rateRelative(current: number | null | undefined, benchmark: number | null | undefined): Rating {
+  if (current == null || benchmark == null || benchmark <= 0) return 'na'
+  const ratio = current / benchmark
+  return ratio <= 0.85 ? 'good' : ratio >= 1.15 ? 'bad' : 'neutral'
+}
+function rangeOf(history: any[] | undefined, key: string): { min: number; max: number } | null {
+  const vals = (history ?? []).map((h) => h[key]).filter((v) => v != null)
+  if (!vals.length) return null
+  return { min: Math.min(...vals), max: Math.max(...vals) }
+}
+function benchmarkHint(base: string, ownMedian: number | null | undefined, ownRange: { min: number; max: number } | null, peerMedian: number | null | undefined, peerCount: number | undefined) {
+  const bits: string[] = []
+  if (ownMedian != null) bits.push(`own history ${ownMedian.toFixed(1)}x${ownRange ? ` (${ownRange.min.toFixed(0)}x–${ownRange.max.toFixed(0)}x)` : ''}`)
+  if (peerMedian != null) bits.push(`sector median ${peerMedian.toFixed(1)}x (${peerCount} peers)`)
+  return bits.length ? `${base} — ${bits.join(', ')}` : base
+}
 
 function verdict(ratings: Rating[]): { label: string; color: string } {
   const rated = ratings.filter((r) => r !== 'na')
@@ -210,12 +226,24 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
   const rDilutionYoy = rateDilution(f.shares_yoy)
   const rDilutionCagr = rateDilution(f.shares_cagr)
 
-  // Valuation
+  // Valuation — prefer sector-peer median, fall back to the company's own
+  // trading history, and fall back further to a generic heuristic when
+  // neither benchmark is available.
+  const peer = f.peer_benchmark ?? {}
+  const peRange = rangeOf(f.valuation_history, 'pe')
+  const psRange = rangeOf(f.valuation_history, 'ps')
+  const pbRange = rangeOf(f.valuation_history, 'pb')
+
+  const peBenchmark = peer.median_pe ?? f.own_pe_median
+  const psBenchmark = peer.median_ps ?? f.own_ps_median
+  const pbBenchmark = peer.median_pb ?? f.own_pb_median
+
   const rPeg = rateBelow(f.peg_ratio, 1, 2)
   const rForwardPe = rateBelow(f.forward_pe, 20, 35)
+  const rTrailingPe = peBenchmark != null ? rateRelative(f.trailing_pe, peBenchmark) : 'na'
   const rEvEbitda = rateBelow(f.ev_to_ebitda, 15, 25)
-  const rPs = rateBelow(f.price_to_sales, 5, 10)
-  const rPb = rateBelow(f.price_to_book, 5, 10)
+  const rPs = psBenchmark != null ? rateRelative(f.price_to_sales, psBenchmark) : rateBelow(f.price_to_sales, 5, 10)
+  const rPb = pbBenchmark != null ? rateRelative(f.price_to_book, pbBenchmark) : rateBelow(f.price_to_book, 5, 10)
   const rUpside = rateAbove(analystUpside, 0.15, 0)
 
   return (
@@ -280,16 +308,43 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
         <SubsectionCard
           title="Are the ratios cheap or expensive?"
           accent="#a78bfa"
-          description="Generic heuristics, not sector-adjusted — read alongside the growth story."
-          verdictInfo={verdict([rPeg, rForwardPe, rEvEbitda, rPs, rPb, rUpside])}
+          description={
+            peer.peer_count
+              ? `Benchmarked against ${peer.peer_count} sector peers and the company's own trading history.`
+              : 'Benchmarked against the company\'s own trading history where available; otherwise a generic heuristic.'
+          }
+          verdictInfo={verdict([rPeg, rForwardPe, rTrailingPe, rEvEbitda, rPs, rPb, rUpside])}
         >
-          <MetricRow label="PEG ratio" value={f.peg_ratio != null ? f.peg_ratio.toFixed(2) : '—'} rating={rPeg} hint="P/E adjusted for growth — the cleanest cheap-vs-expensive signal" />
+          <MetricRow
+            label="PEG ratio"
+            value={f.peg_ratio != null ? f.peg_ratio.toFixed(2) : '—'}
+            rating={rPeg}
+            hint={benchmarkHint('P/E adjusted for growth — the cleanest cheap-vs-expensive signal', null, null, peer.median_peg, peer.peer_count)}
+          />
           <MetricRow label="Forward P/E" value={fmtRatio(f.forward_pe)} rating={rForwardPe} hint="Price vs. next year's expected earnings" />
-          <MetricRow label="Trailing P/E" value={fmtRatio(f.trailing_pe)} rating="na" hint="Price vs. last 12 months' earnings" />
+          <MetricRow
+            label="Trailing P/E"
+            value={fmtRatio(f.trailing_pe)}
+            rating={rTrailingPe}
+            hint={benchmarkHint("Price vs. last 12 months' earnings", f.own_pe_median, peRange, peer.median_pe, peer.peer_count)}
+          />
           <MetricRow label="EV / EBITDA" value={fmtRatio(f.ev_to_ebitda)} rating={rEvEbitda} hint="Capital-structure-neutral valuation multiple" />
-          <MetricRow label="Price / Sales" value={fmtRatio(f.price_to_sales)} rating={rPs} hint="Useful when earnings are thin or negative" />
-          <MetricRow label="Price / Book" value={fmtRatio(f.price_to_book)} rating={rPb} hint="Price vs. net asset value" />
+          <MetricRow
+            label="Price / Sales"
+            value={fmtRatio(f.price_to_sales)}
+            rating={rPs}
+            hint={benchmarkHint('Useful when earnings are thin or negative', f.own_ps_median, psRange, peer.median_ps, peer.peer_count)}
+          />
+          <MetricRow
+            label="Price / Book"
+            value={fmtRatio(f.price_to_book)}
+            rating={rPb}
+            hint={benchmarkHint('Price vs. net asset value', f.own_pb_median, pbRange, peer.median_pb, peer.peer_count)}
+          />
           <MetricRow label="Analyst target upside" value={fmtPct(analystUpside, true)} rating={rUpside} hint={`Current ${fmtUsd(f.current_price)} vs. mean target ${fmtUsd(f.analyst_target_mean)}`} />
+          {peer.peers?.length > 0 && (
+            <div className="py-1.5 text-[10px] text-gray-600">Sector peers: {peer.peers.join(', ')}</div>
+          )}
         </SubsectionCard>
 
       </div>

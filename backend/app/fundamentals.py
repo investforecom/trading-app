@@ -3,6 +3,9 @@ Fundamentals fetch — wraps yfinance and normalizes into a flat dict used by
 the Quality Screen, the DCF form, and Claude's thesis context.
 """
 
+import statistics
+from concurrent.futures import ThreadPoolExecutor
+
 import yfinance as yf
 
 
@@ -16,6 +19,15 @@ def fetch_fundamentals(ticker: str) -> dict:
     revenue_history = _annual_history(t, "Total Revenue")
     shares_history = _annual_history(t, "Ordinary Shares Number", statement="balance_sheet")
     income_statement_history = _income_statement_history(t)
+
+    # Own-history multiples and peer/sector medians are each a slow network
+    # round trip (price history download / several peer .info calls) — run
+    # them side by side rather than back to back.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        valuation_history_fut = pool.submit(_own_valuation_history, t)
+        peer_benchmark_fut = pool.submit(_peer_benchmark, ticker.upper(), info.get("industryKey"))
+        valuation_history = valuation_history_fut.result()
+        peer_benchmark = peer_benchmark_fut.result()
 
     total_debt = info.get("totalDebt") or 0
     total_cash = info.get("totalCash") or 0
@@ -80,6 +92,11 @@ def fetch_fundamentals(ticker: str) -> dict:
         "analyst_target_mean": info.get("targetMeanPrice"),
         "analyst_target_low": info.get("targetLowPrice"),
         "analyst_target_high": info.get("targetHighPrice"),
+        "valuation_history": valuation_history,
+        "own_pe_median": _median_of(valuation_history, "pe"),
+        "own_ps_median": _median_of(valuation_history, "ps"),
+        "own_pb_median": _median_of(valuation_history, "pb"),
+        "peer_benchmark": peer_benchmark,
 
         # ── DCF bridge inputs ────────────────────────────────────────────
         "total_debt": total_debt,
@@ -145,6 +162,111 @@ def _income_statement_history(t: "yf.Ticker") -> list[dict]:
         return out
     except Exception:
         return []
+
+
+def _own_valuation_history(t: "yf.Ticker") -> list[dict]:
+    """P/E, P/S, P/B at each of the last few fiscal year-ends, computed from the
+    statements plus the historical close nearest each year-end. Benchmarks
+    today's multiples against the company's own trading range, not the market's."""
+    try:
+        fin = t.financials
+        bs = t.balance_sheet
+        required = ["Diluted EPS", "Total Revenue", "Diluted Average Shares"]
+        if fin is None or fin.empty or any(r not in fin.index for r in required):
+            return []
+        if bs is None or bs.empty or "Stockholders Equity" not in bs.index:
+            return []
+
+        hist = t.history(period="6y", auto_adjust=True)
+        if hist is None or hist.empty:
+            return []
+        closes = hist["Close"]
+        if closes.index.tz is not None:
+            closes.index = closes.index.tz_localize(None)
+
+        out = []
+        for col in sorted(fin.columns):
+            eps = fin.loc["Diluted EPS", col]
+            revenue = fin.loc["Total Revenue", col]
+            shares = fin.loc["Diluted Average Shares", col]
+            equity = bs.loc["Stockholders Equity", col] if col in bs.columns else None
+            if any(v is None or v != v for v in [eps, revenue, shares, equity]):
+                continue
+
+            price_series = closes[closes.index <= col]
+            if price_series.empty:
+                continue
+            price = float(price_series.iloc[-1])
+
+            pe = price / eps if eps > 0 else None
+            ps = price / (revenue / shares) if shares else None
+            pb = price / (equity / shares) if equity > 0 and shares else None
+
+            out.append({
+                "fiscal_year_end": str(col.date()),
+                "pe": round(pe, 2) if pe else None,
+                "ps": round(ps, 2) if ps else None,
+                "pb": round(pb, 2) if pb else None,
+            })
+        return out
+    except Exception:
+        return []
+
+
+# Sanity bounds per multiple — screens out bad ADR/currency-mismatch data
+# (e.g. a foreign ADR occasionally reports a P/S two orders of magnitude off).
+_MULTIPLE_BOUNDS = {"pe": (0, 500), "ps": (0.1, 100), "pb": (0, 100), "peg": (0, 20)}
+
+
+def _peer_benchmark(ticker: str, industry_key: str | None, max_peers: int = 8) -> dict:
+    """Median P/E, P/S, P/B, PEG across same-industry peers, via yfinance's
+    Industry.top_companies list. Best-effort — returns {} on any failure."""
+    if not industry_key:
+        return {}
+    try:
+        top = yf.Industry(industry_key).top_companies
+        if top is None or top.empty:
+            return {}
+        peers = [s for s in top.index.tolist() if s.upper() != ticker][:max_peers]
+        if not peers:
+            return {}
+
+        def fetch_one(sym: str) -> dict | None:
+            try:
+                i = yf.Ticker(sym).info
+                return {
+                    "symbol": sym,
+                    "pe": i.get("trailingPE"),
+                    "ps": i.get("priceToSalesTrailing12Months"),
+                    "pb": i.get("priceToBook"),
+                    "peg": i.get("pegRatio") or i.get("trailingPegRatio"),
+                }
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            results = [r for r in pool.map(fetch_one, peers) if r]
+
+        def median(key: str) -> float | None:
+            lo, hi = _MULTIPLE_BOUNDS[key]
+            vals = [r[key] for r in results if r.get(key) and lo <= r[key] <= hi]
+            return round(statistics.median(vals), 2) if vals else None
+
+        return {
+            "peer_count": len(results),
+            "peers": sorted(r["symbol"] for r in results),
+            "median_pe": median("pe"),
+            "median_ps": median("ps"),
+            "median_pb": median("pb"),
+            "median_peg": median("peg"),
+        }
+    except Exception:
+        return {}
+
+
+def _median_of(history: list[dict], key: str) -> float | None:
+    vals = [h[key] for h in history if h.get(key) is not None]
+    return round(statistics.median(vals), 2) if vals else None
 
 
 def _interest_coverage(t: "yf.Ticker") -> float | None:
