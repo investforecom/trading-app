@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
+import { runDcf } from '@/lib/dcf'
 
 // ── formatting helpers ──────────────────────────────────────────────────────
 
@@ -794,9 +795,9 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
 
   const [history, setHistory] = useState<any[]>([])
   const [viewingRun, setViewingRun] = useState<any>(null)
-  const [generating, setGenerating] = useState(false)
-  const [genError, setGenError] = useState<string | null>(null)
-  const [result, setResult] = useState<any>(null)
+  const [savedThesis, setSavedThesis] = useState<any>(null)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
     api.thesis.history(ticker).then(setHistory).catch(() => setHistory([]))
@@ -818,10 +819,20 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
   }
 
   const startingValue = fundamentals?.[DRIVER_FIELD[driver]]
+  const shares = fundamentals?.shares_outstanding
+  const netDebt = fundamentals?.net_debt ?? 0
 
-  async function handleGenerate() {
-    setGenerating(true)
-    setGenError(null)
+  // Pure local arithmetic — recomputes on every keystroke, no network call.
+  const liveResult = useMemo(() => {
+    if (startingValue == null || !shares) return null
+    return runDcf(driver, startingValue, shares, netDebt, includeBridge, dilutionRate / 100, dilutionYears, scenarios.bear, scenarios.base, scenarios.bull)
+  }, [driver, startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, scenarios])
+
+  const hasError = liveResult && (liveResult.bear.error || liveResult.base.error || liveResult.bull.error)
+
+  async function handleSave() {
+    setSaving(true)
+    setSaveError(null)
     try {
       const run = await api.thesis.generate(ticker, {
         driver,
@@ -830,24 +841,47 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
         dilution_years: dilutionYears,
         bear: scenarios.bear, base: scenarios.base, bull: scenarios.bull,
       })
-      setResult(run)
+      setSavedThesis({
+        thesis_text: run.thesis_text,
+        risks_json: run.risks_json,
+        scenario_commentary: run.dcf_outputs_json?.scenario_commentary,
+        target_price: run.target_price,
+        created_at: run.created_at,
+      })
       setViewingRun(null)
       api.thesis.history(ticker).then(setHistory).catch(() => {})
     } catch (e: any) {
-      setGenError(String(e.message || e))
+      setSaveError(String(e.message || e))
     } finally {
-      setGenerating(false)
+      setSaving(false)
     }
   }
 
   async function loadRun(id: number) {
     const run = await api.thesis.run(id)
     setViewingRun(run)
-    setResult(null)
   }
 
-  const displayed = viewingRun ?? result
-  const displayedDcf = displayed?.dcf_outputs_json ?? null
+  // Normalize live vs. historical into one shape so the results section below
+  // renders identically either way.
+  const displayed = viewingRun
+    ? {
+        current_price: viewingRun.current_price,
+        bear: viewingRun.dcf_outputs_json.bear, base: viewingRun.dcf_outputs_json.base, bull: viewingRun.dcf_outputs_json.bull,
+        sensitivity: viewingRun.dcf_outputs_json.sensitivity,
+        thesis_text: viewingRun.thesis_text, risks_json: viewingRun.risks_json,
+        scenario_commentary: viewingRun.dcf_outputs_json.scenario_commentary,
+        target_price: viewingRun.target_price, writtenAt: viewingRun.created_at,
+      }
+    : liveResult
+      ? {
+          current_price: fundamentals?.current_price,
+          bear: liveResult.bear, base: liveResult.base, bull: liveResult.bull, sensitivity: liveResult.sensitivity,
+          thesis_text: savedThesis?.thesis_text, risks_json: savedThesis?.risks_json,
+          scenario_commentary: savedThesis?.scenario_commentary,
+          target_price: savedThesis?.target_price, writtenAt: savedThesis?.created_at,
+        }
+      : null
 
   return (
     <div className="space-y-6">
@@ -901,80 +935,104 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
           <ScenarioForm label="Base" color="#9ca3af" value={scenarios.base} onChange={(s) => setScenarios({ ...scenarios, base: s })} />
           <ScenarioForm label="Bull" color="#34d399" value={scenarios.bull} onChange={(s) => setScenarios({ ...scenarios, bull: s })} />
         </div>
-
-        <button
-          onClick={handleGenerate}
-          disabled={generating}
-          className="mt-3 px-4 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors disabled:opacity-40"
-        >
-          {generating ? 'Generating…' : 'Generate DCF'}
-        </button>
-        {genError && <p className="text-xs text-red-400 mt-2">{genError}</p>}
       </div>
 
-      {displayed && displayedDcf && (
+      {!liveResult && !viewingRun && (
+        <p className="text-xs text-gray-600">Missing {DRIVER_LABEL[driver].toLowerCase()} or shares outstanding for {ticker} — can't calculate.</p>
+      )}
+
+      {displayed && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-[10px] text-gray-600 uppercase tracking-wider">
-              {viewingRun ? `Saved run · ${new Date(viewingRun.created_at).toLocaleString()}` : 'Result'}
+              {viewingRun ? `Saved run · ${new Date(viewingRun.created_at).toLocaleString()}` : 'Live — updates as you edit assumptions'}
             </h2>
             {viewingRun && (
               <button onClick={() => setViewingRun(null)} className="text-[10px] text-blue-400 hover:underline">Back to current</button>
             )}
           </div>
 
+          {!viewingRun && (liveResult?.bear.error || liveResult?.base.error || liveResult?.bull.error) && (
+            <div className="text-xs text-red-400 space-y-0.5">
+              {liveResult.bear.error && <p>Bear: {liveResult.bear.error}</p>}
+              {liveResult.base.error && <p>Base: {liveResult.base.error}</p>}
+              {liveResult.bull.error && <p>Bull: {liveResult.bull.error}</p>}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <Stat label="Bear FV" value={fmtUsd(displayed.fair_value_bear)} color={upsideColor(displayed.current_price, displayed.fair_value_bear)} />
-            <Stat label="Base FV" value={fmtUsd(displayed.fair_value_base)} color={upsideColor(displayed.current_price, displayed.fair_value_base)} />
-            <Stat label="Bull FV" value={fmtUsd(displayed.fair_value_bull)} color={upsideColor(displayed.current_price, displayed.fair_value_bull)} />
+            <Stat label="Bear FV" value={fmtUsd(displayed.bear.implied_price)} color={upsideColor(displayed.current_price, displayed.bear.implied_price)} />
+            <Stat label="Base FV" value={fmtUsd(displayed.base.implied_price)} color={upsideColor(displayed.current_price, displayed.base.implied_price)} />
+            <Stat label="Bull FV" value={fmtUsd(displayed.bull.implied_price)} color={upsideColor(displayed.current_price, displayed.bull.implied_price)} />
             <Stat label="Target Price" value={fmtUsd(displayed.target_price)} color={upsideColor(displayed.current_price, displayed.target_price)} bold />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-center">
-            <TerminalCrossCheck result={displayedDcf.bear} />
-            <TerminalCrossCheck result={displayedDcf.base} />
-            <TerminalCrossCheck result={displayedDcf.bull} />
+            <TerminalCrossCheck result={displayed.bear} />
+            <TerminalCrossCheck result={displayed.base} />
+            <TerminalCrossCheck result={displayed.bull} />
           </div>
 
-          {displayedDcf.base?.diluted_shares && fundamentals?.shares_outstanding && (
+          {displayed.base?.diluted_shares && fundamentals?.shares_outstanding && (
             <div className="text-[10px] text-gray-600 text-center">
-              Diluted shares at horizon: {(displayedDcf.base.diluted_shares / 1e6).toFixed(0)}M (from {(fundamentals.shares_outstanding / 1e6).toFixed(0)}M today)
+              Diluted shares at horizon: {(displayed.base.diluted_shares / 1e6).toFixed(0)}M (from {(fundamentals.shares_outstanding / 1e6).toFixed(0)}M today)
             </div>
           )}
 
-          {displayed.thesis_text && (
-            <div className="bg-card border border-border rounded-xl p-4">
-              <h3 className="text-xs font-semibold text-gray-300 mb-1.5">Thesis</h3>
-              <p className="text-sm text-gray-300 leading-relaxed">{displayed.thesis_text}</p>
+          {!viewingRun && (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleSave}
+                disabled={saving || !!hasError}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors disabled:opacity-40"
+              >
+                {saving ? 'Saving…' : 'Save & Write Thesis'}
+              </button>
+              <span className="text-[10px] text-gray-600">Persists this run to history and writes the narrative, risks, and target price below.</span>
             </div>
           )}
+          {saveError && <p className="text-xs text-red-400">{saveError}</p>}
 
-          {displayedDcf.scenario_commentary && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <CommentaryCard label="Bear" text={displayedDcf.scenario_commentary.bear} color="text-red-400" />
-              <CommentaryCard label="Base" text={displayedDcf.scenario_commentary.base} color="text-gray-300" />
-              <CommentaryCard label="Bull" text={displayedDcf.scenario_commentary.bull} color="text-emerald-400" />
-            </div>
+          {displayed.thesis_text ? (
+            <>
+              {displayed.writtenAt && (
+                <p className="text-[10px] text-gray-600">Written {new Date(displayed.writtenAt).toLocaleString()} — based on the inputs at that time.</p>
+              )}
+              <div className="bg-card border border-border rounded-xl p-4">
+                <h3 className="text-xs font-semibold text-gray-300 mb-1.5">Thesis</h3>
+                <p className="text-sm text-gray-300 leading-relaxed">{displayed.thesis_text}</p>
+              </div>
+
+              {displayed.scenario_commentary && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <CommentaryCard label="Bear" text={displayed.scenario_commentary.bear} color="text-red-400" />
+                  <CommentaryCard label="Base" text={displayed.scenario_commentary.base} color="text-gray-300" />
+                  <CommentaryCard label="Bull" text={displayed.scenario_commentary.bull} color="text-emerald-400" />
+                </div>
+              )}
+
+              {displayed.risks_json && (
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <h3 className="text-xs font-semibold text-gray-300 mb-2">Top Risks</h3>
+                  <ul className="space-y-2">
+                    {displayed.risks_json.map((r: any, i: number) => (
+                      <li key={i} className="text-sm">
+                        <span className="text-yellow-400 font-medium">{r.title}</span>
+                        <span className="text-gray-400"> — {r.detail}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          ) : !viewingRun && (
+            <p className="text-xs text-gray-600">No written thesis yet for these numbers — hit Save & Write Thesis above.</p>
           )}
 
-          {displayed.risks_json && (
-            <div className="bg-card border border-border rounded-xl p-4">
-              <h3 className="text-xs font-semibold text-gray-300 mb-2">Top Risks</h3>
-              <ul className="space-y-2">
-                {displayed.risks_json.map((r: any, i: number) => (
-                  <li key={i} className="text-sm">
-                    <span className="text-yellow-400 font-medium">{r.title}</span>
-                    <span className="text-gray-400"> — {r.detail}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {displayedDcf.sensitivity && (
+          {displayed.sensitivity && (
             <div className="bg-card border border-border rounded-xl p-4">
               <h3 className="text-xs font-semibold text-gray-300 mb-2">Sensitivity — Implied Price (Base Case, Gordon Growth)</h3>
-              <SensitivityTable sens={displayedDcf.sensitivity} current={displayed.current_price} />
+              <SensitivityTable sens={displayed.sensitivity} current={displayed.current_price} />
             </div>
           )}
         </div>
