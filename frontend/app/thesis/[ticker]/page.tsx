@@ -35,6 +35,10 @@ function upsideColor(current: number | null, target: number | null) {
   if (current == null || target == null) return 'text-gray-500'
   return target > current ? 'text-emerald-400' : target < current ? 'text-red-400' : 'text-gray-400'
 }
+function vsCurrentPct(current: number | null | undefined, fv: number | null | undefined): string | undefined {
+  if (current == null || fv == null || !current) return undefined
+  return `${fmtPct(fv / current - 1, true)} vs current`
+}
 
 // ── rating system ────────────────────────────────────────────────────────
 // Every metric gets a plain-language color: green = good, yellow = mixed,
@@ -842,11 +846,12 @@ function SensitivityTable({ sens, current }: { sens: any; current: number | null
   )
 }
 
-function Stat({ label, value, color, bold }: { label: string; value: string; color?: string; bold?: boolean }) {
+function Stat({ label, value, color, bold, sub }: { label: string; value: string; color?: string; bold?: boolean; sub?: string }) {
   return (
     <div className="bg-card border border-border rounded-xl p-3">
       <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">{label}</p>
       <p className={`text-sm tabular-nums ${bold ? 'font-bold text-base' : 'font-semibold'} ${color ?? 'text-gray-100'}`}>{value}</p>
+      {sub && <p className="text-[10px] text-gray-500 tabular-nums mt-0.5">{sub}</p>}
     </div>
   )
 }
@@ -889,24 +894,30 @@ function TerminalCrossCheck({ result }: { result: any }) {
   )
 }
 
-// Compares the headline implied price against what the OTHER terminal
-// method would produce with self-consistent assumptions (see ScenarioForm's
-// sync logic) — a check that the growth story and the market-multiple story
-// roughly agree, not a second opinion on the business itself.
+// Compares the Gordon-growth price against an exit-multiple price grounded
+// in TODAY'S actual trading multiple (EV/driver, or equity/driver when the
+// net-debt bridge is off) — a genuinely independent, market-based second
+// opinion. Deliberately does NOT reuse ScenarioForm's live-synced hidden
+// terminal field: that field is defined to equal the Gordon-implied
+// multiple, so comparing against it would always show ~0% apart.
 function MethodAgreement({
-  startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, base,
+  startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, currentPrice, base,
 }: {
   startingValue: number; shares: number; netDebt: number; includeBridge: boolean
-  dilutionRate: number; dilutionYears: number; base: any
+  dilutionRate: number; dilutionYears: number; currentPrice: number | null | undefined; base: any
 }) {
-  if (!base?.assumptions) return null
-  const flipped = { ...base.assumptions, terminal_method: base.terminal_method_used === 'gordon' ? 'exit_multiple' : 'gordon' }
-  const alt = runScenario(startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, flipped)
-  if (alt.error || base.implied_price == null || alt.implied_price == null) return null
+  if (!base?.assumptions || !currentPrice || !shares || !startingValue) return null
+  const currentEquityValue = currentPrice * shares
+  const currentMultiple = (includeBridge ? currentEquityValue + netDebt : currentEquityValue) / startingValue
+  if (!Number.isFinite(currentMultiple) || currentMultiple <= 0) return null
 
-  const gordonPrice = base.terminal_method_used === 'gordon' ? base.implied_price : alt.implied_price
-  const exitPrice = base.terminal_method_used === 'gordon' ? alt.implied_price : base.implied_price
-  const diff = Math.abs(gordonPrice - exitPrice) / Math.max(gordonPrice, exitPrice)
+  const gordonAssumptions = { ...base.assumptions, terminal_method: 'gordon' as const }
+  const exitAssumptions = { ...base.assumptions, terminal_method: 'exit_multiple' as const, exit_multiple: currentMultiple }
+  const gordon = runScenario(startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, gordonAssumptions)
+  const exit = runScenario(startingValue, shares, netDebt, includeBridge, dilutionRate, dilutionYears, exitAssumptions)
+  if (gordon.error || exit.error || gordon.implied_price == null || exit.implied_price == null) return null
+
+  const diff = Math.abs(gordon.implied_price - exit.implied_price) / Math.max(gordon.implied_price, exit.implied_price)
   const verdict = diff < 0.10
     ? { label: 'Methods agree — valuation looks robust', color: 'text-emerald-400' }
     : diff < 0.25
@@ -917,8 +928,8 @@ function MethodAgreement({
     <div className="bg-card border border-border rounded-xl p-4">
       <h3 className="text-xs font-semibold text-gray-300 mb-2">Method Agreement (Base Case)</h3>
       <div className="grid grid-cols-2 gap-3 mb-2">
-        <Stat label="Perpetuity Method" value={fmtUsd(gordonPrice)} />
-        <Stat label="Exit Multiple Method" value={fmtUsd(exitPrice)} />
+        <Stat label="Perpetuity Method" value={fmtUsd(gordon.implied_price)} sub={`${fmtPct(gordonAssumptions.terminal_growth)} terminal growth`} />
+        <Stat label="Exit Multiple Method" value={fmtUsd(exit.implied_price)} sub={`${currentMultiple.toFixed(1)}x — today's actual multiple`} />
       </div>
       <p className={`text-xs font-medium ${verdict.color}`}>{verdict.label} ({fmtPct(diff)} apart)</p>
     </div>
@@ -1195,11 +1206,10 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
             </div>
           )}
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <Stat label="Bear FV" value={fmtUsd(displayed.bear.implied_price)} color={upsideColor(displayed.current_price, displayed.bear.implied_price)} />
-            <Stat label="Base FV" value={fmtUsd(displayed.base.implied_price)} color={upsideColor(displayed.current_price, displayed.base.implied_price)} />
-            <Stat label="Bull FV" value={fmtUsd(displayed.bull.implied_price)} color={upsideColor(displayed.current_price, displayed.bull.implied_price)} />
-            <Stat label="Target Price" value={fmtUsd(displayed.target_price)} color={upsideColor(displayed.current_price, displayed.target_price)} bold />
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <Stat label="Bear FV" value={fmtUsd(displayed.bear.implied_price)} color={upsideColor(displayed.current_price, displayed.bear.implied_price)} sub={vsCurrentPct(displayed.current_price, displayed.bear.implied_price)} />
+            <Stat label="Base FV" value={fmtUsd(displayed.base.implied_price)} color={upsideColor(displayed.current_price, displayed.base.implied_price)} sub={vsCurrentPct(displayed.current_price, displayed.base.implied_price)} />
+            <Stat label="Bull FV" value={fmtUsd(displayed.bull.implied_price)} color={upsideColor(displayed.current_price, displayed.bull.implied_price)} sub={vsCurrentPct(displayed.current_price, displayed.bull.implied_price)} />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-center">
@@ -1222,6 +1232,7 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
               includeBridge={methodCheckInputs.includeBridge}
               dilutionRate={methodCheckInputs.dilutionRate}
               dilutionYears={methodCheckInputs.dilutionYears}
+              currentPrice={displayed.current_price}
               base={displayed.base}
             />
           )}
@@ -1304,7 +1315,7 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
               >
                 <span className="text-xs text-gray-400">{new Date(h.created_at).toLocaleString()}</span>
                 <span className="text-xs text-gray-300 tabular-nums">
-                  Target {fmtUsd(h.target_price)} · Price then {fmtUsd(h.current_price)}
+                  Base FV {fmtUsd(h.fair_value_base)} · Price then {fmtUsd(h.current_price)}
                 </span>
               </button>
             ))}
