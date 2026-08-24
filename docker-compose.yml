@@ -31,7 +31,6 @@ services:
       PGDATABASE: trading
       PGUSER: ${POSTGRES_USER}
       PGPASSWORD: ${POSTGRES_PASSWORD}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     volumes:
       - /home/char/workspace/trading-routine:/trading-routine:ro
       - /home/char/logs:/app/logs

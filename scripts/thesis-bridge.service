@@ -1,0 +1,16 @@
+[Unit]
+Description=Thesis Bridge – Claude CLI relay for the investment thesis builder
+After=network.target
+
+[Service]
+Type=simple
+User=char
+WorkingDirectory=/home/char/workspace
+ExecStart=/usr/bin/python3 /home/char/workspace/trading-app/scripts/thesis_bridge.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
