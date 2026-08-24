@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.db import query, query_one, execute
-from app.fundamentals import fetch_fundamentals
+from app.fundamentals import fetch_fundamentals, search_tickers
 from app.dcf import DCFInputs, ScenarioInputs, run_dcf
 from app.thesis_ai import generate_thesis
 
@@ -34,6 +34,15 @@ class GenerateBody(BaseModel):
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
+
+@router.get("/search")
+def search(q: str):
+    """Ticker/company-name lookup — the pre-search gate before starting a thesis."""
+    try:
+        return search_tickers(q)
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
 
 @router.get("/tickers")
 def list_tickers():

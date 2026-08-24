@@ -56,6 +56,26 @@ def fetch_fundamentals(ticker: str) -> dict:
     }
 
 
+def search_tickers(query: str, max_results: int = 8) -> list[dict]:
+    """Ticker/company-name lookup for the pre-search gate — disambiguates before
+    committing to a symbol (e.g. 'apple' matching AAPL vs. Apple Hospitality REIT,
+    or the same company cross-listed on multiple exchanges)."""
+    if not query or len(query.strip()) < 2:
+        return []
+    results = yf.Search(query.strip(), max_results=max_results, news_count=0, lists_count=0).quotes
+    return [
+        {
+            "symbol": r.get("symbol"),
+            "name": r.get("longname") or r.get("shortname"),
+            "exchange": r.get("exchDisp"),
+            "type": r.get("typeDisp"),
+            "sector": r.get("sectorDisp"),
+        }
+        for r in results
+        if r.get("symbol") and r.get("quoteType") in ("EQUITY", "ETF")
+    ]
+
+
 def _revenue_history(t: "yf.Ticker") -> list[dict]:
     """Last few fiscal years of annual revenue, oldest first, for CAGR context."""
     try:

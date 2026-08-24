@@ -56,6 +56,7 @@ export const api = {
     bridgeStatus: ()            => get<any>('/system/bridge/status'),
   },
   thesis: {
+    search:           (q: string)        => get<any[]>(`/thesis/search?q=${encodeURIComponent(q)}`),
     tickers:          ()                 => get<any[]>('/thesis/tickers'),
     history:          (ticker: string)   => get<any[]>(`/thesis/${encodeURIComponent(ticker)}/history`),
     run:              (id: number)       => get<any>(`/thesis/run/${id}`),
