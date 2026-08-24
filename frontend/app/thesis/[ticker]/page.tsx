@@ -1011,7 +1011,10 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
   const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
-    api.thesis.history(ticker).then(setHistory).catch(() => setHistory([]))
+    api.thesis.history(ticker).then((h) => {
+      setHistory(h)
+      if (h.length > 0) loadRun(h[0].id)  // land on the latest saved run, not a blank live calculator
+    }).catch(() => setHistory([]))
   }, [ticker])
 
   function changeDriver(d: Driver) {
@@ -1386,6 +1389,20 @@ export default function ThesisTickerPage() {
       .catch((e) => setFundamentalsError(String(e.message || e)))
       .finally(() => setLoadingFundamentals(false))
     api.thesis.fundamentalsHistory(ticker).then(setFundamentalsHistory).catch(() => setFundamentalsHistory([]))
+  }, [ticker])
+
+  // If a thesis already exists for this ticker, jump straight to the DCF
+  // tab (which itself defaults to the latest saved run) instead of parking
+  // the user back on the Quality Screen every time they revisit a ticker.
+  useEffect(() => {
+    setStage('quality')
+    setUnlocked(['quality'])
+    api.thesis.thesisQa(ticker).then((qa) => {
+      if (!qa) return
+      setThesisQa(qa)
+      setUnlocked(['quality', 'thesis', 'dcf'])
+      setStage('dcf')
+    }).catch(() => {})
   }, [ticker])
 
   async function handleRefresh() {
