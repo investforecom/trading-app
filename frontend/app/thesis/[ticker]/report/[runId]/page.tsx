@@ -142,6 +142,22 @@ export default function ThesisReportPage() {
           .no-print { display: none !important; }
           .page-break-after { break-after: page; }
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+
+          /* The app is dark-themed (light text on a near-black body); flip to
+             a light page for print so text stays legible on paper. Only the
+             hue-carrying colors (chart bars, rating dots/text) are left alone. */
+          body { background: #fff !important; }
+          .report-print { color: #0f172a !important; }
+          .report-print .text-gray-100 { color: #0f172a !important; }
+          .report-print .text-gray-200 { color: #1e293b !important; }
+          .report-print .text-gray-300 { color: #334155 !important; }
+          .report-print .text-gray-400 { color: #475569 !important; }
+          .report-print .text-gray-500 { color: #64748b !important; }
+          .report-print .text-gray-600 { color: #94a3b8 !important; }
+          .report-print .border-border,
+          .report-print .border-border\/30,
+          .report-print .border-border\/40,
+          .report-print .border-border\/50 { border-color: #cbd5e1 !important; }
         }
       `}</style>
 
