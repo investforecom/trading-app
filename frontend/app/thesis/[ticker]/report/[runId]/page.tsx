@@ -11,15 +11,15 @@ const DRIVER_LABEL: Record<string, string> = { fcf: 'Free Cash Flow', revenue: '
 
 function Section({ title, children, avoidBreak = true, pageBreakAfter = false }: { title: string; children: React.ReactNode; avoidBreak?: boolean; pageBreakAfter?: boolean }) {
   return (
-    <section className={`mb-8 ${avoidBreak ? 'break-inside-avoid' : ''} ${pageBreakAfter ? 'page-break-after' : ''}`}>
-      <h2 className="text-sm font-semibold text-gray-100 uppercase tracking-wider border-b border-border pb-2 mb-3">{title}</h2>
+    <section className={`mb-5 ${avoidBreak ? 'break-inside-avoid' : ''} ${pageBreakAfter ? 'page-break-after' : ''}`}>
+      <h2 className="text-sm font-semibold text-gray-100 uppercase tracking-wider border-b border-border pb-1.5 mb-2">{title}</h2>
       {children}
     </section>
   )
 }
 
 function SubHeading({ children }: { children: React.ReactNode }) {
-  return <h3 className="text-xs font-semibold text-gray-300 mt-4 mb-1.5 first:mt-0">{children}</h3>
+  return <h3 className="text-[11px] font-semibold text-gray-300 mt-2 mb-1 first:mt-0">{children}</h3>
 }
 
 function QualityGroup({ title, accent, verdictInfo, children }: {
@@ -254,31 +254,31 @@ export default function ThesisReportPage() {
       {qa && (
         <Section title="Business Fundamentals" avoidBreak={false}>
           <SubHeading>Demand</SubHeading>
-          <p className="text-xs text-gray-400 leading-relaxed">{qa.demand}</p>
+          <p className="text-[11px] text-gray-400 leading-snug">{qa.demand}</p>
 
           <SubHeading>Moat — {qa.moat_trend}</SubHeading>
-          <p className="text-xs text-gray-400 leading-relaxed">{qa.moat}</p>
-          <p className="text-[10px] text-gray-600 mt-1">{qa.moat_trend_reason}</p>
+          <p className="text-[11px] text-gray-400 leading-snug">{qa.moat}</p>
+          <p className="text-[10px] text-gray-600 mt-0.5">{qa.moat_trend_reason}</p>
 
           <SubHeading>Do the numbers support the story? — {qa.numbers_support_story ? 'Yes' : 'No'}</SubHeading>
-          <p className="text-xs text-gray-400 leading-relaxed">{qa.numbers_support_reason}</p>
+          <p className="text-[11px] text-gray-400 leading-snug">{qa.numbers_support_reason}</p>
 
           {qa.growth_rate_reasoning && (
             <>
               <SubHeading>Growth rate rationale</SubHeading>
-              <p className="text-xs text-gray-400 leading-relaxed">{qa.growth_rate_reasoning}</p>
+              <p className="text-[11px] text-gray-400 leading-snug">{qa.growth_rate_reasoning}</p>
             </>
           )}
 
           {qa.catalysts?.length > 0 && (
             <>
               <SubHeading>Catalysts</SubHeading>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 {qa.catalysts.map((c: any, i: number) => (
-                  <div key={i} className="text-xs">
+                  <div key={i} className="text-[11px] leading-snug">
                     <span className="text-gray-200 font-medium">{c.title}</span>
                     <span className="text-gray-600"> — {c.timing}</span>
-                    <p className="text-gray-500 mt-0.5">{c.detail}</p>
+                    <span className="text-gray-500"> — {c.detail}</span>
                   </div>
                 ))}
               </div>
@@ -288,11 +288,11 @@ export default function ThesisReportPage() {
       )}
 
       <Section title="Top Risks" pageBreakAfter>
-        <div className="space-y-2">
+        <div className="space-y-1">
           {(run.risks_json ?? []).map((r: any, i: number) => (
-            <div key={i} className="text-xs">
+            <div key={i} className="text-[11px] leading-snug">
               <span className="text-gray-200 font-medium">{i + 1}. {r.title}</span>
-              <p className="text-gray-500 mt-0.5">{r.detail}</p>
+              <span className="text-gray-500"> — {r.detail}</span>
             </div>
           ))}
         </div>
