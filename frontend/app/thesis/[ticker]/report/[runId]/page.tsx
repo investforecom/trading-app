@@ -141,6 +141,7 @@ export default function ThesisReportPage() {
           .report-print { position: absolute; left: 0; top: 0; width: 100%; padding: 0; margin: 0; max-width: none; }
           .no-print { display: none !important; }
           .page-break-after { break-after: page; }
+          * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
         }
       `}</style>
 
