@@ -212,7 +212,7 @@ export default function ThesisReportPage() {
         </p>
       </div>
 
-      <Section title="Quality Screen" avoidBreak={false} pageBreakAfter>
+      <Section title="Financials" avoidBreak={false} pageBreakAfter>
         <div className="grid grid-cols-2 gap-2 mb-2">
           <QualityGroup title="Reliable growth" accent="#3b82f6"
             description="Consistent growth across the whole income statement — not lumpy, not a black box."
@@ -312,6 +312,13 @@ export default function ThesisReportPage() {
       {qa && (
         <Section title="Business Fundamentals" avoidBreak={false}>
           <div className="space-y-1.5">
+            {f.summary && (
+              <div className="text-[11px] leading-snug">
+                <span className="text-gray-200 font-medium">The Business</span>
+                <span className="text-gray-500"> — {f.summary}</span>
+              </div>
+            )}
+
             <div className="text-[11px] leading-snug">
               <span className="text-gray-200 font-medium">Demand</span>
               <span className="text-gray-500"> — {qa.demand}</span>

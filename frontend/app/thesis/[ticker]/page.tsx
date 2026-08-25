@@ -285,7 +285,7 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
         onClick={onContinue}
         className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors"
       >
-        Continue to Thesis →
+        Continue to Business Fundamentals →
       </button>
     </div>
   )
@@ -357,20 +357,27 @@ function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf, onThesisChange
     <div className="space-y-4 max-w-3xl">
       {loading && <div className="text-xs text-gray-600 py-12 text-center">Loading thesis…</div>}
 
+      {fundamentals?.summary && (
+        <div className="bg-card border border-border rounded-xl p-4">
+          <h3 className="text-xs font-semibold text-gray-300 mb-1.5">About the Business</h3>
+          <p className="text-sm text-gray-400 leading-relaxed">{fundamentals.summary}</p>
+        </div>
+      )}
+
       {!loading && !qa && (
         <div className="bg-card border border-border rounded-xl p-5">
-          <h3 className="text-sm font-semibold text-gray-100 mb-1">No thesis generated yet</h3>
+          <h3 className="text-sm font-semibold text-gray-100 mb-1">No business fundamentals generated yet</h3>
           <p className="text-xs text-gray-500 mb-3">
-            Answers demand, moat, moat direction, and growth stage — grounded in the Quality
-            Screen fundamentals above, with a bounded web search to fill in anything the
-            numbers alone can't answer (e.g. a recent 10-Q disclosure).
+            Answers demand, moat, moat direction, and growth stage — grounded in the Financials
+            above, with a bounded web search to fill in anything the numbers alone can't answer
+            (e.g. a recent 10-Q disclosure).
           </p>
           <button
             onClick={handleGenerate}
             disabled={generating}
             className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors disabled:opacity-40"
           >
-            {generating ? 'Generating…' : 'Generate Thesis'}
+            {generating ? 'Generating…' : 'Generate Business Fundamentals'}
           </button>
         </div>
       )}
@@ -487,7 +494,7 @@ function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf, onThesisChange
 
       <div className="flex gap-2">
         <button onClick={onBack} className="px-4 py-2 rounded-lg text-sm font-medium bg-white/5 text-gray-400 hover:bg-white/10 transition-colors">
-          ← Back to Quality Screen
+          ← Back to Financials
         </button>
         <button
           onClick={onSkipToDcf}
@@ -1289,8 +1296,8 @@ function DcfStage({ ticker, fundamentals, thesis, onBack }: { ticker: string; fu
 
 type Stage = 'quality' | 'thesis' | 'dcf'
 const STAGES: { key: Stage; label: string }[] = [
-  { key: 'quality', label: '1. Quality Screen' },
-  { key: 'thesis', label: '2. Thesis' },
+  { key: 'quality', label: '1. Financials' },
+  { key: 'thesis', label: '2. Business Fundamentals' },
   { key: 'dcf', label: '3. DCF' },
 ]
 
