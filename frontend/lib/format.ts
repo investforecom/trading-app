@@ -45,7 +45,7 @@ export function vsCurrentPct(current: number | null | undefined, fv: number | nu
 // Trims a long company-description blob (e.g. Yahoo's longBusinessSummary,
 // often 6-8 sentences) down to its first few sentences — a lightweight
 // summary with no extra AI call.
-export function summarizeBusiness(text: string | null | undefined, maxSentences = 3): string {
+export function summarizeBusiness(text: string | null | undefined, maxSentences = 6): string {
   if (!text) return ''
   const sentences = text.match(/[^.!?]+[.!?]+/g) ?? [text]
   return sentences.slice(0, maxSentences).join(' ').trim()
