@@ -4,12 +4,14 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
 import { fmtUsd, fmtBig, fmtPct, fmtRatio, vsCurrentPct } from '@/lib/format'
+import { type Rating, RATING_TEXT, rateAbove, rateBelow, rateDilution, rateRelative, verdict } from '@/lib/quality'
+import { GroupedBarChart } from '@/components/charts/grouped-bar-chart'
 
 const DRIVER_LABEL: Record<string, string> = { fcf: 'Free Cash Flow', revenue: 'Revenue', net_income: 'Net Income' }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, children, avoidBreak = true, pageBreakAfter = false }: { title: string; children: React.ReactNode; avoidBreak?: boolean; pageBreakAfter?: boolean }) {
   return (
-    <section className="mb-8 break-inside-avoid">
+    <section className={`mb-8 ${avoidBreak ? 'break-inside-avoid' : ''} ${pageBreakAfter ? 'page-break-after' : ''}`}>
       <h2 className="text-sm font-semibold text-gray-100 uppercase tracking-wider border-b border-border pb-2 mb-3">{title}</h2>
       {children}
     </section>
@@ -20,11 +22,25 @@ function SubHeading({ children }: { children: React.ReactNode }) {
   return <h3 className="text-xs font-semibold text-gray-300 mt-4 mb-1.5 first:mt-0">{children}</h3>
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function QualityGroup({ title, accent, verdictInfo, children }: {
+  title: string; accent: string; verdictInfo: { label: string; color: string }; children: React.ReactNode
+}) {
   return (
-    <div className="flex justify-between gap-4 py-1 text-xs border-b border-border/30">
-      <span className="text-gray-500">{label}</span>
-      <span className="text-gray-200 tabular-nums font-medium text-right">{value}</span>
+    <div className="rounded-lg border border-border/50 overflow-hidden" style={{ borderTopColor: accent, borderTopWidth: 2 }}>
+      <div className="flex items-center justify-between px-2.5 py-1 border-b border-border/40">
+        <h3 className="text-[10px] font-semibold text-gray-200">{title}</h3>
+        <span className={`text-[9px] font-semibold uppercase tracking-wider ${verdictInfo.color}`}>{verdictInfo.label}</span>
+      </div>
+      <div className="px-2.5 py-0.5">{children}</div>
+    </div>
+  )
+}
+
+function QLine({ label, value, rating }: { label: string; value: string; rating: Rating }) {
+  return (
+    <div className="flex items-center justify-between gap-2 py-[2px] text-[9.5px] leading-tight">
+      <span className="text-gray-500 truncate">{label}</span>
+      <span className={`font-semibold tabular-nums flex-shrink-0 ${RATING_TEXT[rating]}`}>{value}</span>
     </div>
   )
 }
@@ -70,6 +86,51 @@ export default function ThesisReportPage() {
   const commentary = outputs.scenario_commentary ?? {}
   const driverLabel = DRIVER_LABEL[outputs.driver] ?? outputs.driver
   const analystUpside = f.current_price && f.analyst_target_mean ? f.analyst_target_mean / f.current_price - 1 : null
+  const fcfMargin = f.revenue_ttm && f.free_cashflow != null ? f.free_cashflow / f.revenue_ttm : null
+
+  // Same rating thresholds as the interactive Quality Screen — kept in sync via lib/quality.
+  const rGrowth = rateAbove(f.revenue_growth_yoy, 0.15, 0)
+  const rCagr = rateAbove(f.revenue_cagr, 0.15, 0)
+  const rGrossProfitYoy = rateAbove(f.gross_profit_yoy, 0.15, 0)
+  const rGrossProfitCagr = rateAbove(f.gross_profit_cagr, 0.15, 0)
+  const rOperatingIncomeYoy = rateAbove(f.operating_income_yoy, 0.15, 0)
+  const rOperatingIncomeCagr = rateAbove(f.operating_income_cagr, 0.15, 0)
+  const rNetIncomeYoy = rateAbove(f.net_income_yoy, 0.15, 0)
+  const rNetIncomeCagr = rateAbove(f.net_income_cagr, 0.15, 0)
+
+  const rOcfYoy = rateAbove(f.operating_cashflow_yoy, 0.15, 0)
+  const rOcfCagr = rateAbove(f.operating_cashflow_cagr, 0.15, 0)
+  const rFcfYoy = rateAbove(f.fcf_yoy, 0.15, 0)
+  const rFcfCagr = rateAbove(f.fcf_cagr, 0.15, 0)
+
+  const rGross = rateAbove(f.gross_margin, 0.5, 0.3)
+  const rOperating = rateAbove(f.operating_margin, 0.2, 0.1)
+  const rEbitda = rateAbove(f.ebitda_margin, 0.25, 0.12)
+  const rProfit = rateAbove(f.profit_margin, 0.15, 0.05)
+  const rFcf = rateAbove(fcfMargin, 0.15, 0.05)
+  const rRoe = rateAbove(f.return_on_equity, 0.20, 0.10)
+  const rRoa = rateAbove(f.return_on_assets, 0.10, 0.05)
+  const rRoic = rateAbove(f.return_on_invested_capital, 0.12, 0.06)
+
+  const rDebtToEquity = rateBelow(f.debt_to_equity_pct, 40, 100)
+  const rCurrentRatio = rateAbove(f.current_ratio, 1.5, 1.0)
+  const rNetDebtEbitda = rateBelow(f.net_debt_to_ebitda, 1, 3)
+  const rInterestCoverage = f.interest_coverage == null ? 'good' : rateAbove(f.interest_coverage, 8, 3)
+
+  const rDilutionYoy = rateDilution(f.shares_yoy)
+  const rDilutionCagr = rateDilution(f.shares_cagr)
+
+  const peer = f.peer_benchmark ?? {}
+  const peBenchmark = peer.median_pe ?? f.own_pe_median
+  const psBenchmark = peer.median_ps ?? f.own_ps_median
+  const pbBenchmark = peer.median_pb ?? f.own_pb_median
+  const rPeg = rateBelow(f.peg_ratio, 1, 2)
+  const rForwardPe = peer.median_forward_pe != null ? rateRelative(f.forward_pe, peer.median_forward_pe) : rateBelow(f.forward_pe, 20, 35)
+  const rTrailingPe = peBenchmark != null ? rateRelative(f.trailing_pe, peBenchmark) : 'na' as Rating
+  const rEvEbitda = peer.median_ev_ebitda != null ? rateRelative(f.ev_to_ebitda, peer.median_ev_ebitda) : rateBelow(f.ev_to_ebitda, 15, 25)
+  const rPs = psBenchmark != null ? rateRelative(f.price_to_sales, psBenchmark) : rateBelow(f.price_to_sales, 5, 10)
+  const rPb = pbBenchmark != null ? rateRelative(f.price_to_book, pbBenchmark) : rateBelow(f.price_to_book, 5, 10)
+  const rUpside = rateAbove(analystUpside, 0.15, 0)
 
   return (
     <div className="report-print max-w-3xl mx-auto py-8 px-4">
@@ -79,6 +140,7 @@ export default function ThesisReportPage() {
           .report-print, .report-print * { visibility: visible; }
           .report-print { position: absolute; left: 0; top: 0; width: 100%; padding: 0; margin: 0; max-width: none; }
           .no-print { display: none !important; }
+          .page-break-after { break-after: page; }
         }
       `}</style>
 
@@ -99,51 +161,80 @@ export default function ThesisReportPage() {
         </p>
       </div>
 
-      <Section title="Quality Screen">
-        <SubHeading>Growth (Income Statement)</SubHeading>
-        <Row label="Revenue" value={`${fmtBig(f.revenue_ttm)} TTM · ${fmtPct(f.revenue_growth_yoy, true)} YoY · ${fmtPct(f.revenue_cagr, true)} CAGR`} />
-        <Row label="Gross Profit" value={`${fmtBig(f.gross_profit_ttm)} TTM · ${fmtPct(f.gross_profit_yoy, true)} YoY · ${fmtPct(f.gross_profit_cagr, true)} CAGR`} />
-        <Row label="Operating Income" value={`${fmtBig(f.operating_income_ttm)} TTM · ${fmtPct(f.operating_income_yoy, true)} YoY · ${fmtPct(f.operating_income_cagr, true)} CAGR`} />
-        <Row label="Net Income" value={`${fmtBig(f.net_income_ttm)} TTM · ${fmtPct(f.net_income_yoy, true)} YoY · ${fmtPct(f.net_income_cagr, true)} CAGR`} />
+      <Section title="Quality Screen" avoidBreak={false} pageBreakAfter>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <QualityGroup title="Reliable growth" accent="#3b82f6"
+            verdictInfo={verdict([rGrowth, rCagr, rGrossProfitYoy, rGrossProfitCagr, rOperatingIncomeYoy, rOperatingIncomeCagr, rNetIncomeYoy, rNetIncomeCagr])}>
+            <QLine label="Revenue YoY / CAGR" value={`${fmtPct(f.revenue_growth_yoy, true)} / ${fmtPct(f.revenue_cagr, true)}`} rating={rGrowth} />
+            <QLine label="Gross profit YoY / CAGR" value={`${fmtPct(f.gross_profit_yoy, true)} / ${fmtPct(f.gross_profit_cagr, true)}`} rating={rGrossProfitYoy} />
+            <QLine label="Op. income YoY / CAGR" value={`${fmtPct(f.operating_income_yoy, true)} / ${fmtPct(f.operating_income_cagr, true)}`} rating={rOperatingIncomeYoy} />
+            <QLine label="Net income YoY / CAGR" value={`${fmtPct(f.net_income_yoy, true)} / ${fmtPct(f.net_income_cagr, true)}`} rating={rNetIncomeYoy} />
+          </QualityGroup>
 
-        <SubHeading>Cash Conversion</SubHeading>
-        <Row label="Operating Cash Flow" value={`${fmtBig(f.operating_cashflow_ttm)} TTM · ${fmtPct(f.operating_cashflow_yoy, true)} YoY · ${fmtPct(f.operating_cashflow_cagr, true)} CAGR`} />
-        <Row label="Capex (latest FY)" value={`${fmtBig(f.capex_ttm)} · ${fmtPct(f.capex_yoy, true)} YoY · ${fmtPct(f.capex_cagr, true)} CAGR`} />
-        <Row label="Free Cash Flow" value={`${fmtBig(f.free_cashflow)} TTM · ${fmtPct(f.fcf_yoy, true)} YoY · ${fmtPct(f.fcf_cagr, true)} CAGR`} />
+          <QualityGroup title="Cash conversion" accent="#22d3ee" verdictInfo={verdict([rOcfYoy, rOcfCagr, rFcfYoy, rFcfCagr])}>
+            <QLine label="Op. cash flow YoY / CAGR" value={`${fmtPct(f.operating_cashflow_yoy, true)} / ${fmtPct(f.operating_cashflow_cagr, true)}`} rating={rOcfYoy} />
+            <QLine label="FCF YoY / CAGR" value={`${fmtPct(f.fcf_yoy, true)} / ${fmtPct(f.fcf_cagr, true)}`} rating={rFcfYoy} />
+            <QLine label="Capex (latest FY)" value={fmtBig(f.capex_ttm)} rating="na" />
+            <QLine label="Free cash flow (TTM)" value={fmtBig(f.free_cashflow)} rating="na" />
+          </QualityGroup>
 
-        <SubHeading>Profitability</SubHeading>
-        <Row label="Gross margin" value={fmtPct(f.gross_margin)} />
-        <Row label="Operating margin" value={fmtPct(f.operating_margin)} />
-        <Row label="EBITDA margin" value={fmtPct(f.ebitda_margin)} />
-        <Row label="Net margin" value={fmtPct(f.profit_margin)} />
-        <Row label="Return on equity" value={fmtPct(f.return_on_equity)} />
-        <Row label="Return on assets" value={fmtPct(f.return_on_assets)} />
+          <QualityGroup title="Profitability & efficiency" accent="#34d399" verdictInfo={verdict([rGross, rOperating, rEbitda, rProfit, rFcf, rRoe, rRoa, rRoic])}>
+            <QLine label="Gross / operating margin" value={`${fmtPct(f.gross_margin)} / ${fmtPct(f.operating_margin)}`} rating={rGross} />
+            <QLine label="EBITDA / net margin" value={`${fmtPct(f.ebitda_margin)} / ${fmtPct(f.profit_margin)}`} rating={rEbitda} />
+            <QLine label="FCF margin" value={fmtPct(fcfMargin)} rating={rFcf} />
+            <QLine label="Return on equity / assets" value={`${fmtPct(f.return_on_equity)} / ${fmtPct(f.return_on_assets)}`} rating={rRoe} />
+            <QLine label="Return on invested capital" value={fmtPct(f.return_on_invested_capital)} rating={rRoic} />
+          </QualityGroup>
 
-        <SubHeading>Balance Sheet</SubHeading>
-        <Row label="Net debt (cash if negative)" value={fmtBig(f.net_debt)} />
-        <Row label="Net debt / EBITDA" value={fmtRatio(f.net_debt_to_ebitda)} />
-        <Row label="Debt / Equity" value={f.debt_to_equity_pct != null ? `${f.debt_to_equity_pct.toFixed(1)}%` : '—'} />
-        <Row label="Current ratio" value={fmtRatio(f.current_ratio)} />
-        <Row label="Interest coverage" value={f.interest_coverage != null ? fmtRatio(f.interest_coverage) : '— (negligible debt)'} />
+          <QualityGroup title="Balance sheet" accent="#fb923c" verdictInfo={verdict([rDebtToEquity, rCurrentRatio, rNetDebtEbitda, rInterestCoverage])}>
+            <QLine label="Net debt (cash if neg.)" value={fmtBig(f.net_debt)} rating="na" />
+            <QLine label="Net debt / EBITDA" value={fmtRatio(f.net_debt_to_ebitda)} rating={rNetDebtEbitda} />
+            <QLine label="Debt / equity" value={f.debt_to_equity_pct != null ? `${f.debt_to_equity_pct.toFixed(1)}%` : '—'} rating={rDebtToEquity} />
+            <QLine label="Current ratio" value={fmtRatio(f.current_ratio)} rating={rCurrentRatio} />
+            <QLine label="Interest coverage" value={f.interest_coverage != null ? fmtRatio(f.interest_coverage) : 'negligible debt'} rating={rInterestCoverage} />
+          </QualityGroup>
 
-        <SubHeading>Dilution</SubHeading>
-        <Row label="Shares outstanding YoY" value={fmtPct(f.shares_yoy, true)} />
-        <Row label="Shares CAGR" value={fmtPct(f.shares_cagr, true)} />
-        <Row label="Insider ownership" value={fmtPct(f.insider_pct)} />
-        <Row label="Institutional ownership" value={fmtPct(f.institution_pct)} />
+          <QualityGroup title="Dilution" accent="#f59e0b" verdictInfo={verdict([rDilutionYoy, rDilutionCagr])}>
+            <QLine label="Shares out. YoY / CAGR" value={`${fmtPct(f.shares_yoy, true)} / ${fmtPct(f.shares_cagr, true)}`} rating={rDilutionYoy} />
+            <QLine label="Insider ownership" value={fmtPct(f.insider_pct)} rating="na" />
+            <QLine label="Institutional ownership" value={fmtPct(f.institution_pct)} rating="na" />
+          </QualityGroup>
 
-        <SubHeading>Valuation</SubHeading>
-        <Row label="PEG ratio" value={f.peg_ratio != null ? f.peg_ratio.toFixed(2) : '—'} />
-        <Row label="Forward P/E" value={fmtRatio(f.forward_pe)} />
-        <Row label="Trailing P/E" value={fmtRatio(f.trailing_pe)} />
-        <Row label="EV / EBITDA" value={fmtRatio(f.ev_to_ebitda)} />
-        <Row label="Price / Sales" value={fmtRatio(f.price_to_sales)} />
-        <Row label="Price / Book" value={fmtRatio(f.price_to_book)} />
-        <Row label="Analyst target upside" value={fmtPct(analystUpside, true)} />
+          <QualityGroup title="Valuation" accent="#a78bfa" verdictInfo={verdict([rPeg, rForwardPe, rTrailingPe, rEvEbitda, rPs, rPb, rUpside])}>
+            <QLine label="PEG / Fwd P/E" value={`${f.peg_ratio != null ? f.peg_ratio.toFixed(2) : '—'} / ${fmtRatio(f.forward_pe)}`} rating={rPeg} />
+            <QLine label="Trailing P/E / EV-EBITDA" value={`${fmtRatio(f.trailing_pe)} / ${fmtRatio(f.ev_to_ebitda)}`} rating={rTrailingPe} />
+            <QLine label="P/S / P/B" value={`${fmtRatio(f.price_to_sales)} / ${fmtRatio(f.price_to_book)}`} rating={rPs} />
+            <QLine label="Analyst target upside" value={fmtPct(analystUpside, true)} rating={rUpside} />
+          </QualityGroup>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-lg border border-border/50 overflow-hidden">
+            <div className="px-2.5 py-1 border-b border-border/40">
+              <h3 className="text-[10px] font-semibold text-gray-200">Is the business reliable?</h3>
+            </div>
+            <GroupedBarChart data={f.income_statement_history} series={[
+              { key: 'revenue', label: 'Revenue', color: '#60a5fa' },
+              { key: 'gross_profit', label: 'Gross Profit', color: '#34d399' },
+              { key: 'operating_income', label: 'Op. Income', color: '#fbbf24' },
+              { key: 'net_income', label: 'Net Income', color: '#f472b6' },
+            ]} />
+          </div>
+          <div className="rounded-lg border border-border/50 overflow-hidden">
+            <div className="px-2.5 py-1 border-b border-border/40">
+              <h3 className="text-[10px] font-semibold text-gray-200">Does the business convert profit into cash?</h3>
+            </div>
+            <GroupedBarChart data={f.cash_flow_history} series={[
+              { key: 'operating_cash_flow', label: 'Op. Cash Flow', color: '#60a5fa' },
+              { key: 'capex', label: 'Capex', color: '#f87171' },
+              { key: 'fcf', label: 'FCF', color: '#34d399' },
+            ]} />
+          </div>
+        </div>
       </Section>
 
       {qa && (
-        <Section title="Thesis">
+        <Section title="Business Fundamentals" avoidBreak={false}>
           <SubHeading>Demand</SubHeading>
           <p className="text-xs text-gray-400 leading-relaxed">{qa.demand}</p>
 
@@ -177,6 +268,17 @@ export default function ThesisReportPage() {
           )}
         </Section>
       )}
+
+      <Section title="Top Risks" pageBreakAfter>
+        <div className="space-y-2">
+          {(run.risks_json ?? []).map((r: any, i: number) => (
+            <div key={i} className="text-xs">
+              <span className="text-gray-200 font-medium">{i + 1}. {r.title}</span>
+              <p className="text-gray-500 mt-0.5">{r.detail}</p>
+            </div>
+          ))}
+        </div>
+      </Section>
 
       <Section title={`DCF — ${driverLabel} Driver`}>
         <div className="overflow-x-auto">
@@ -226,17 +328,6 @@ export default function ThesisReportPage() {
             </div>
           )
         })}
-      </Section>
-
-      <Section title="Top Risks">
-        <div className="space-y-2">
-          {(run.risks_json ?? []).map((r: any, i: number) => (
-            <div key={i} className="text-xs">
-              <span className="text-gray-200 font-medium">{i + 1}. {r.title}</span>
-              <p className="text-gray-500 mt-0.5">{r.detail}</p>
-            </div>
-          ))}
-        </div>
       </Section>
     </div>
   )

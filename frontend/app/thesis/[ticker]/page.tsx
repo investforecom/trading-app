@@ -5,47 +5,8 @@ import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
 import { runDcf, runScenario, impliedMultipleFromGordon, impliedGrowthFromMultiple } from '@/lib/dcf'
 import { fmtUsd, fmtBig, fmtPct, fmtRatio, fmtShares, upsideColor, vsCurrentPct } from '@/lib/format'
-
-// ── rating system ────────────────────────────────────────────────────────
-// Every metric gets a plain-language color: green = good, yellow = mixed,
-// red = weak, gray = not enough data / informational only.
-
-type Rating = 'good' | 'neutral' | 'bad' | 'na'
-
-const RATING_DOT: Record<Rating, string> = {
-  good: 'bg-emerald-400', neutral: 'bg-yellow-400', bad: 'bg-red-400', na: 'bg-gray-600',
-}
-const RATING_TEXT: Record<Rating, string> = {
-  good: 'text-emerald-400', neutral: 'text-yellow-400', bad: 'text-red-400', na: 'text-gray-500',
-}
-
-function rateAbove(v: number | null | undefined, goodMin: number, neutralMin: number): Rating {
-  if (v == null || Number.isNaN(v)) return 'na'
-  return v >= goodMin ? 'good' : v >= neutralMin ? 'neutral' : 'bad'
-}
-function rateBelow(v: number | null | undefined, goodMax: number, neutralMax: number): Rating {
-  if (v == null || Number.isNaN(v)) return 'na'
-  return v <= goodMax ? 'good' : v <= neutralMax ? 'neutral' : 'bad'
-}
-function rateDilution(v: number | null | undefined): Rating {
-  if (v == null || Number.isNaN(v)) return 'na'
-  return v < 0 ? 'good' : v <= 0.02 ? 'neutral' : 'bad'
-}
-function rateRelative(current: number | null | undefined, benchmark: number | null | undefined): Rating {
-  if (current == null || benchmark == null || benchmark <= 0) return 'na'
-  const ratio = current / benchmark
-  return ratio <= 0.85 ? 'good' : ratio >= 1.15 ? 'bad' : 'neutral'
-}
-
-function verdict(ratings: Rating[]): { label: string; color: string } {
-  const rated = ratings.filter((r) => r !== 'na')
-  if (rated.length === 0) return { label: 'Not enough data', color: 'text-gray-500' }
-  const good = rated.filter((r) => r === 'good').length
-  const bad = rated.filter((r) => r === 'bad').length
-  if (good >= rated.length - bad && good > bad) return { label: 'Strong', color: 'text-emerald-400' }
-  if (bad > good) return { label: 'Weak', color: 'text-red-400' }
-  return { label: 'Mixed', color: 'text-yellow-400' }
-}
+import { type Rating, RATING_DOT, RATING_TEXT, rateAbove, rateBelow, rateDilution, rateRelative, verdict } from '@/lib/quality'
+import { GroupedBarChart } from '@/components/charts/grouped-bar-chart'
 
 // ── small building blocks ───────────────────────────────────────────────────
 
@@ -144,49 +105,6 @@ function HistoryBars({ history, accent, unit }: { history: { fiscal_year_end: st
   )
 }
 
-interface ChartSeries { key: string; label: string; color: string }
-
-function GroupedBarChart({ data, series }: { data: Record<string, any>[]; series: ChartSeries[] }) {
-  if (!data || data.length < 2) return null
-  const allValues = data.flatMap((d) => series.map((s) => d[s.key]))
-  const min = Math.min(0, ...allValues)
-  const max = Math.max(...allValues)
-  const range = max - min || 1
-  return (
-    <div className="px-4 pb-3 pt-2">
-      <div className="flex items-end gap-3 h-28">
-        {data.map((d, i) => (
-          <div key={i} className="flex-1 flex flex-col items-center gap-1 h-full justify-end">
-            <div className="w-full flex items-end justify-center gap-0.5 h-full">
-              {series.map((s) => {
-                const v = d[s.key]
-                const heightPct = Math.max(((v - min) / range) * 100, 2)
-                return (
-                  <div
-                    key={s.key}
-                    className="flex-1 rounded-t"
-                    style={{ height: `${heightPct}%`, backgroundColor: s.color, opacity: 0.8 }}
-                    title={`${s.label} ${d.fiscal_year_end.slice(0, 4)}: ${fmtBig(v)}`}
-                  />
-                )
-              })}
-            </div>
-            <span className="text-[9px] text-gray-600 whitespace-nowrap">{d.fiscal_year_end.slice(0, 4)}</span>
-          </div>
-        ))}
-      </div>
-      <div className="flex items-center gap-3 justify-center mt-2 flex-wrap">
-        {series.map((s) => (
-          <div key={s.key} className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ backgroundColor: s.color }} />
-            <span className="text-[9px] text-gray-500">{s.label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 // ── Quality Screen ───────────────────────────────────────────────────────────
 
 function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
@@ -217,6 +135,7 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
   const rFcf = rateAbove(fcfMargin, 0.15, 0.05)
   const rRoe = rateAbove(f.return_on_equity, 0.20, 0.10)
   const rRoa = rateAbove(f.return_on_assets, 0.10, 0.05)
+  const rRoic = rateAbove(f.return_on_invested_capital, 0.12, 0.06)
 
   // Debt & liquidity
   const rDebtToEquity = rateBelow(f.debt_to_equity_pct, 40, 100)
@@ -294,7 +213,7 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
           title="Is the business profitable and efficient?"
           accent="#34d399"
           description="How much of every sales dollar turns into real profit and cash."
-          verdictInfo={verdict([rGross, rOperating, rEbitda, rProfit, rFcf, rRoe, rRoa])}
+          verdictInfo={verdict([rGross, rOperating, rEbitda, rProfit, rFcf, rRoe, rRoa, rRoic])}
         >
           <MetricRow label="Gross margin" value={fmtPct(f.gross_margin)} rating={rGross} hint="Revenue left after direct cost of goods — pricing power" />
           <MetricRow label="Operating margin" value={fmtPct(f.operating_margin)} rating={rOperating} hint="Profit after running the business, before interest/tax" />
@@ -303,6 +222,7 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
           <MetricRow label="FCF margin" value={fmtPct(fcfMargin)} rating={rFcf} hint="Actual cash generated per dollar of revenue — hardest to fake" />
           <MetricRow label="Return on equity" value={fmtPct(f.return_on_equity)} rating={rRoe} hint="Profit generated per dollar of shareholder capital" />
           <MetricRow label="Return on assets" value={fmtPct(f.return_on_assets)} rating={rRoa} hint="Profit generated per dollar of total assets" />
+          <MetricRow label="Return on invested capital" value={fmtPct(f.return_on_invested_capital)} rating={rRoic} hint="Profit generated per dollar of capital actually invested (debt + equity − cash) — unaffected by leverage, the cleanest efficiency read" />
         </SubsectionCard>
 
         <SubsectionCard

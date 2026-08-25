@@ -55,6 +55,8 @@ def fetch_fundamentals(ticker: str) -> dict:
     free_cashflow_ttm = info.get("freeCashflow")
     capex_ttm = cash_flow_history[-1]["capex"] if cash_flow_history else None
 
+    return_on_invested_capital = _roic(t, operating_income_ttm, total_debt, total_cash)
+
     return {
         "ticker": ticker.upper(),
         "long_name": info.get("longName") or info.get("shortName") or ticker.upper(),
@@ -106,6 +108,7 @@ def fetch_fundamentals(ticker: str) -> dict:
         "free_cashflow": free_cashflow_ttm,
         "return_on_equity": info.get("returnOnEquity"),
         "return_on_assets": info.get("returnOnAssets"),
+        "return_on_invested_capital": return_on_invested_capital,
 
         # ── Debt & liquidity ─────────────────────────────────────────────
         "debt_to_equity_pct": info.get("debtToEquity"),
@@ -349,6 +352,36 @@ def _peer_benchmark(ticker: str, industry_key: str | None, max_peers: int = 5) -
 def _median_of(history: list[dict], key: str) -> float | None:
     vals = [h[key] for h in history if h.get(key) is not None]
     return round(statistics.median(vals), 2) if vals else None
+
+
+def _roic(t: "yf.Ticker", ebit: float | None, total_debt: float, total_cash: float) -> float | None:
+    """Return on invested capital: NOPAT / (total debt + stockholders equity -
+    cash). Unlike ROE, unaffected by leverage — the cleanest read on how
+    efficiently the underlying business uses capital, debt or equity alike."""
+    try:
+        if ebit is None:
+            return None
+        bs = t.balance_sheet
+        if bs is None or bs.empty or "Stockholders Equity" not in bs.index:
+            return None
+        equity = bs.loc["Stockholders Equity"].dropna().sort_index()
+        if equity.empty:
+            return None
+        latest_equity = float(equity.iloc[-1])
+
+        tax_rate = 0.21
+        fin = t.financials
+        if fin is not None and not fin.empty and "Tax Rate For Calcs" in fin.index:
+            rates = fin.loc["Tax Rate For Calcs"].dropna().sort_index()
+            if not rates.empty:
+                tax_rate = float(rates.iloc[-1])
+
+        invested_capital = total_debt + latest_equity - total_cash
+        if not invested_capital:
+            return None
+        return (ebit * (1 - tax_rate)) / invested_capital
+    except Exception:
+        return None
 
 
 def _interest_coverage(t: "yf.Ticker") -> float | None:
