@@ -146,6 +146,7 @@ export default function ThesisReportPage() {
           /* The app is dark-themed (light text on a near-black body); flip to
              a light page for print so text stays legible on paper. Only the
              hue-carrying colors (chart bars, rating dots/text) are left alone. */
+          html { background: #fff !important; color-scheme: light !important; }
           body { background: #fff !important; }
           .report-print { color: #0f172a !important; }
           .report-print .text-gray-100 { color: #0f172a !important; }
