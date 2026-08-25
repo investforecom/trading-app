@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
-import { fmtUsd, fmtBig, fmtPct, fmtRatio, vsCurrentPct } from '@/lib/format'
-import { type Rating, RATING_TEXT, rateAbove, rateBelow, rateDilution, rateRelative, verdict } from '@/lib/quality'
+import { fmtUsd, fmtBig, fmtPct, fmtRatio, fmtMultiple, vsCurrentPct } from '@/lib/format'
+import { type Rating, RATING_TEXT, rateAbove, rateBelow, rateDilution, rateMultiple, rateRelativeMultiple, verdict } from '@/lib/quality'
 import { GroupedBarChart } from '@/components/charts/grouped-bar-chart'
 
 const DRIVER_LABEL: Record<string, string> = { fcf: 'Free Cash Flow', revenue: 'Revenue', net_income: 'Net Income' }
@@ -153,7 +153,7 @@ export default function ThesisReportPage() {
   const rRoa = rateAbove(f.return_on_assets, 0.10, 0.05)
   const rRoic = rateAbove(f.return_on_invested_capital, 0.12, 0.06)
 
-  const rDebtToEquity = rateBelow(f.debt_to_equity_pct, 40, 100)
+  const rDebtToEquity = f.debt_to_equity_pct != null && f.debt_to_equity_pct < 0 ? 'bad' as Rating : rateBelow(f.debt_to_equity_pct, 40, 100)
   const rCurrentRatio = rateAbove(f.current_ratio, 1.5, 1.0)
   const rNetDebtEbitda = rateBelow(f.net_debt_to_ebitda, 1, 3)
   const rInterestCoverage = f.interest_coverage == null ? 'good' : rateAbove(f.interest_coverage, 8, 3)
@@ -165,12 +165,12 @@ export default function ThesisReportPage() {
   const peBenchmark = peer.median_pe ?? f.own_pe_median
   const psBenchmark = peer.median_ps ?? f.own_ps_median
   const pbBenchmark = peer.median_pb ?? f.own_pb_median
-  const rPeg = rateBelow(f.peg_ratio, 1, 2)
-  const rForwardPe = peer.median_forward_pe != null ? rateRelative(f.forward_pe, peer.median_forward_pe) : rateBelow(f.forward_pe, 20, 35)
-  const rTrailingPe = peBenchmark != null ? rateRelative(f.trailing_pe, peBenchmark) : 'na' as Rating
-  const rEvEbitda = peer.median_ev_ebitda != null ? rateRelative(f.ev_to_ebitda, peer.median_ev_ebitda) : rateBelow(f.ev_to_ebitda, 15, 25)
-  const rPs = psBenchmark != null ? rateRelative(f.price_to_sales, psBenchmark) : rateBelow(f.price_to_sales, 5, 10)
-  const rPb = pbBenchmark != null ? rateRelative(f.price_to_book, pbBenchmark) : rateBelow(f.price_to_book, 5, 10)
+  const rPeg = rateMultiple(f.peg_ratio, 1, 2)
+  const rForwardPe = peer.median_forward_pe != null ? rateRelativeMultiple(f.forward_pe, peer.median_forward_pe) : rateMultiple(f.forward_pe, 20, 35)
+  const rTrailingPe = peBenchmark != null ? rateRelativeMultiple(f.trailing_pe, peBenchmark) : 'na' as Rating
+  const rEvEbitda = peer.median_ev_ebitda != null ? rateRelativeMultiple(f.ev_to_ebitda, peer.median_ev_ebitda) : rateMultiple(f.ev_to_ebitda, 15, 25)
+  const rPs = psBenchmark != null ? rateRelativeMultiple(f.price_to_sales, psBenchmark) : rateMultiple(f.price_to_sales, 5, 10)
+  const rPb = pbBenchmark != null ? rateRelativeMultiple(f.price_to_book, pbBenchmark) : rateMultiple(f.price_to_book, 5, 10)
   const rUpside = rateAbove(analystUpside, 0.15, 0)
 
   return (
@@ -282,12 +282,12 @@ export default function ThesisReportPage() {
           <QualityGroup title="Valuation" accent="#a78bfa"
             description="Is the stock cheap or expensive today?"
             verdictInfo={verdict([rPeg, rForwardPe, rTrailingPe, rEvEbitda, rPs, rPb, rUpside])}>
-            <QLine label="PEG ratio" value={f.peg_ratio != null ? f.peg_ratio.toFixed(2) : '—'} rating={rPeg} />
-            <QLine label="Forward P/E" value={fmtRatio(f.forward_pe)} rating={rForwardPe} />
-            <QLine label="Trailing P/E" value={fmtRatio(f.trailing_pe)} rating={rTrailingPe} />
-            <QLine label="EV / EBITDA" value={fmtRatio(f.ev_to_ebitda)} rating={rEvEbitda} />
-            <QLine label="Price / Sales" value={fmtRatio(f.price_to_sales)} rating={rPs} />
-            <QLine label="Price / Book" value={fmtRatio(f.price_to_book)} rating={rPb} />
+            <QLine label="PEG ratio" value={f.peg_ratio != null ? (f.peg_ratio <= 0 ? 'N/M' : f.peg_ratio.toFixed(2)) : '—'} rating={rPeg} />
+            <QLine label="Forward P/E" value={fmtMultiple(f.forward_pe)} rating={rForwardPe} />
+            <QLine label="Trailing P/E" value={fmtMultiple(f.trailing_pe)} rating={rTrailingPe} />
+            <QLine label="EV / EBITDA" value={fmtMultiple(f.ev_to_ebitda)} rating={rEvEbitda} />
+            <QLine label="Price / Sales" value={fmtMultiple(f.price_to_sales)} rating={rPs} />
+            <QLine label="Price / Book" value={fmtMultiple(f.price_to_book)} rating={rPb} />
             <QLine label="Analyst target upside" value={fmtPct(analystUpside, true)} rating={rUpside} />
           </QualityGroup>
         </div>

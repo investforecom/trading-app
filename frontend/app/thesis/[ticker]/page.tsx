@@ -4,8 +4,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
 import { runDcf, runScenario, impliedMultipleFromGordon, impliedGrowthFromMultiple } from '@/lib/dcf'
-import { fmtUsd, fmtBig, fmtPct, fmtRatio, fmtShares, upsideColor, vsCurrentPct } from '@/lib/format'
-import { type Rating, RATING_DOT, RATING_TEXT, rateAbove, rateBelow, rateDilution, rateRelative, verdict } from '@/lib/quality'
+import { fmtUsd, fmtBig, fmtPct, fmtRatio, fmtMultiple, fmtShares, upsideColor, vsCurrentPct } from '@/lib/format'
+import { type Rating, RATING_DOT, RATING_TEXT, rateAbove, rateBelow, rateDilution, rateMultiple, rateRelativeMultiple, verdict } from '@/lib/quality'
 import { GroupedBarChart } from '@/components/charts/grouped-bar-chart'
 
 // ── small building blocks ───────────────────────────────────────────────────
@@ -138,7 +138,7 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
   const rRoic = rateAbove(f.return_on_invested_capital, 0.12, 0.06)
 
   // Debt & liquidity
-  const rDebtToEquity = rateBelow(f.debt_to_equity_pct, 40, 100)
+  const rDebtToEquity = f.debt_to_equity_pct != null && f.debt_to_equity_pct < 0 ? 'bad' : rateBelow(f.debt_to_equity_pct, 40, 100)
   const rCurrentRatio = rateAbove(f.current_ratio, 1.5, 1.0)
   const rQuickRatio = rateAbove(f.quick_ratio, 1.0, 0.7)
   const rNetDebtEbitda = rateBelow(f.net_debt_to_ebitda, 1, 3)
@@ -156,12 +156,12 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
   const psBenchmark = peer.median_ps ?? f.own_ps_median
   const pbBenchmark = peer.median_pb ?? f.own_pb_median
 
-  const rPeg = rateBelow(f.peg_ratio, 1, 2)
-  const rForwardPe = peer.median_forward_pe != null ? rateRelative(f.forward_pe, peer.median_forward_pe) : rateBelow(f.forward_pe, 20, 35)
-  const rTrailingPe = peBenchmark != null ? rateRelative(f.trailing_pe, peBenchmark) : 'na'
-  const rEvEbitda = peer.median_ev_ebitda != null ? rateRelative(f.ev_to_ebitda, peer.median_ev_ebitda) : rateBelow(f.ev_to_ebitda, 15, 25)
-  const rPs = psBenchmark != null ? rateRelative(f.price_to_sales, psBenchmark) : rateBelow(f.price_to_sales, 5, 10)
-  const rPb = pbBenchmark != null ? rateRelative(f.price_to_book, pbBenchmark) : rateBelow(f.price_to_book, 5, 10)
+  const rPeg = rateMultiple(f.peg_ratio, 1, 2)
+  const rForwardPe = peer.median_forward_pe != null ? rateRelativeMultiple(f.forward_pe, peer.median_forward_pe) : rateMultiple(f.forward_pe, 20, 35)
+  const rTrailingPe = peBenchmark != null ? rateRelativeMultiple(f.trailing_pe, peBenchmark) : 'na'
+  const rEvEbitda = peer.median_ev_ebitda != null ? rateRelativeMultiple(f.ev_to_ebitda, peer.median_ev_ebitda) : rateMultiple(f.ev_to_ebitda, 15, 25)
+  const rPs = psBenchmark != null ? rateRelativeMultiple(f.price_to_sales, psBenchmark) : rateMultiple(f.price_to_sales, 5, 10)
+  const rPb = pbBenchmark != null ? rateRelativeMultiple(f.price_to_book, pbBenchmark) : rateMultiple(f.price_to_book, 5, 10)
   const rUpside = rateAbove(analystUpside, 0.15, 0)
 
   return (
@@ -265,12 +265,12 @@ function QualityScreen({ f, onContinue }: { f: any; onContinue: () => void }) {
           <ValuationTable
             peerCount={peer.peer_count}
             rows={[
-              { label: 'PEG ratio', hint: 'P/E adjusted for growth — the cleanest cheap-vs-expensive signal', value: f.peg_ratio != null ? f.peg_ratio.toFixed(2) : '—', rating: rPeg, sectorMedian: peer.median_peg?.toFixed(2) },
-              { label: 'Forward P/E', hint: "Price vs. next year's expected earnings", value: fmtRatio(f.forward_pe), rating: rForwardPe, sectorMedian: peer.median_forward_pe != null ? fmtRatio(peer.median_forward_pe) : undefined },
-              { label: 'Trailing P/E', hint: "Price vs. last 12 months' earnings", value: fmtRatio(f.trailing_pe), rating: rTrailingPe, ownHistory: f.own_pe_median != null ? fmtRatio(f.own_pe_median) : undefined, sectorMedian: peer.median_pe != null ? fmtRatio(peer.median_pe) : undefined },
-              { label: 'EV / EBITDA', hint: 'Capital-structure-neutral valuation multiple', value: fmtRatio(f.ev_to_ebitda), rating: rEvEbitda, sectorMedian: peer.median_ev_ebitda != null ? fmtRatio(peer.median_ev_ebitda) : undefined },
-              { label: 'Price / Sales', hint: 'Useful when earnings are thin or negative', value: fmtRatio(f.price_to_sales), rating: rPs, ownHistory: f.own_ps_median != null ? fmtRatio(f.own_ps_median) : undefined, sectorMedian: peer.median_ps != null ? fmtRatio(peer.median_ps) : undefined },
-              { label: 'Price / Book', hint: 'Price vs. net asset value', value: fmtRatio(f.price_to_book), rating: rPb, ownHistory: f.own_pb_median != null ? fmtRatio(f.own_pb_median) : undefined, sectorMedian: peer.median_pb != null ? fmtRatio(peer.median_pb) : undefined },
+              { label: 'PEG ratio', hint: 'P/E adjusted for growth — the cleanest cheap-vs-expensive signal', value: f.peg_ratio != null ? (f.peg_ratio <= 0 ? 'N/M' : f.peg_ratio.toFixed(2)) : '—', rating: rPeg, sectorMedian: peer.median_peg?.toFixed(2) },
+              { label: 'Forward P/E', hint: "Price vs. next year's expected earnings", value: fmtMultiple(f.forward_pe), rating: rForwardPe, sectorMedian: peer.median_forward_pe != null ? fmtRatio(peer.median_forward_pe) : undefined },
+              { label: 'Trailing P/E', hint: "Price vs. last 12 months' earnings", value: fmtMultiple(f.trailing_pe), rating: rTrailingPe, ownHistory: f.own_pe_median != null ? fmtRatio(f.own_pe_median) : undefined, sectorMedian: peer.median_pe != null ? fmtRatio(peer.median_pe) : undefined },
+              { label: 'EV / EBITDA', hint: 'Capital-structure-neutral valuation multiple', value: fmtMultiple(f.ev_to_ebitda), rating: rEvEbitda, sectorMedian: peer.median_ev_ebitda != null ? fmtRatio(peer.median_ev_ebitda) : undefined },
+              { label: 'Price / Sales', hint: 'Useful when earnings are thin or negative', value: fmtMultiple(f.price_to_sales), rating: rPs, ownHistory: f.own_ps_median != null ? fmtRatio(f.own_ps_median) : undefined, sectorMedian: peer.median_ps != null ? fmtRatio(peer.median_ps) : undefined },
+              { label: 'Price / Book', hint: 'Price vs. net asset value', value: fmtMultiple(f.price_to_book), rating: rPb, ownHistory: f.own_pb_median != null ? fmtRatio(f.own_pb_median) : undefined, sectorMedian: peer.median_pb != null ? fmtRatio(peer.median_pb) : undefined },
             ]}
           />
           <MetricRow label="Analyst target upside" value={fmtPct(analystUpside, true)} rating={rUpside} hint={`Current ${fmtUsd(f.current_price)} vs. mean target ${fmtUsd(f.analyst_target_mean)}`} />

@@ -5,14 +5,16 @@
 
 export function fmtUsd(n: number | null | undefined, decimals = 2) {
   if (n == null || Number.isNaN(n)) return '—'
-  return `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`
+  const sign = n < 0 ? '-' : ''
+  return `${sign}$${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`
 }
 
 export function fmtBig(n: number | null | undefined) {
   if (n == null) return '—'
   const abs = Math.abs(n)
-  if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`
-  if (abs >= 1e6) return `$${(n / 1e6).toFixed(2)}M`
+  const sign = n < 0 ? '-' : ''
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`
   return fmtUsd(n)
 }
 
@@ -25,6 +27,15 @@ export function fmtPct(n: number | null | undefined, signed = false) {
 export function fmtRatio(n: number | null | undefined) {
   if (n == null || Number.isNaN(n)) return '—'
   return `${n.toFixed(2)}x`
+}
+
+// For price multiples (P/E, EV/EBITDA, PEG, ...) where a non-positive value
+// means the underlying earnings/EBITDA/growth is negative — conventionally
+// "not meaningful" rather than a real ratio to compare against.
+export function fmtMultiple(n: number | null | undefined) {
+  if (n == null || Number.isNaN(n)) return '—'
+  if (n <= 0) return 'N/M'
+  return fmtRatio(n)
 }
 
 export function fmtShares(n: number | null | undefined) {

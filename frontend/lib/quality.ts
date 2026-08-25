@@ -29,6 +29,21 @@ export function rateRelative(current: number | null | undefined, benchmark: numb
   return ratio <= 0.85 ? 'good' : ratio >= 1.15 ? 'bad' : 'neutral'
 }
 
+// Price multiples (P/E, EV/EBITDA, PEG, ...) flip meaning entirely once their
+// denominator (earnings, EBITDA, growth) goes negative — a lower number no
+// longer means "cheaper," it's just an artifact of unprofitability. Standard
+// analyst convention is to call these "not meaningful" rather than grade them,
+// so a non-positive value always reads as 'na' instead of accidentally
+// scoring as cheap/good.
+export function rateMultiple(v: number | null | undefined, goodMax: number, neutralMax: number): Rating {
+  if (v != null && v <= 0) return 'na'
+  return rateBelow(v, goodMax, neutralMax)
+}
+export function rateRelativeMultiple(current: number | null | undefined, benchmark: number | null | undefined): Rating {
+  if (current != null && current <= 0) return 'na'
+  return rateRelative(current, benchmark)
+}
+
 export function verdict(ratings: Rating[]): { label: string; color: string } {
   const rated = ratings.filter((r) => r !== 'na')
   if (rated.length === 0) return { label: 'Not enough data', color: 'text-gray-500' }
