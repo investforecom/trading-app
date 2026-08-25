@@ -18,10 +18,6 @@ function Section({ title, children, avoidBreak = true, pageBreakAfter = false }:
   )
 }
 
-function SubHeading({ children }: { children: React.ReactNode }) {
-  return <h3 className="text-[11px] font-semibold text-gray-300 mt-2 mb-1 first:mt-0">{children}</h3>
-}
-
 function QualityGroup({ title, description, accent, verdictInfo, children }: {
   title: string; description: string; accent: string; verdictInfo: { label: string; color: string }; children: React.ReactNode
 }) {
@@ -315,37 +311,38 @@ export default function ThesisReportPage() {
 
       {qa && (
         <Section title="Business Fundamentals" avoidBreak={false}>
-          <SubHeading>Demand</SubHeading>
-          <p className="text-[11px] text-gray-400 leading-snug">{qa.demand}</p>
+          <div className="space-y-1.5">
+            <div className="text-[11px] leading-snug">
+              <span className="text-gray-200 font-medium">Demand</span>
+              <span className="text-gray-500"> — {qa.demand}</span>
+            </div>
 
-          <SubHeading>Moat — {qa.moat_trend}</SubHeading>
-          <p className="text-[11px] text-gray-400 leading-snug">{qa.moat}</p>
-          <p className="text-[10px] text-gray-600 mt-0.5">{qa.moat_trend_reason}</p>
+            <div className="text-[11px] leading-snug">
+              <span className="text-gray-200 font-medium">Moat — {qa.moat_trend}</span>
+              <span className="text-gray-500"> — {qa.moat}</span>
+              {qa.moat_trend_reason && <span className="text-gray-600"> ({qa.moat_trend_reason})</span>}
+            </div>
 
-          <SubHeading>Do the numbers support the story? — {qa.numbers_support_story ? 'Yes' : 'No'}</SubHeading>
-          <p className="text-[11px] text-gray-400 leading-snug">{qa.numbers_support_reason}</p>
+            <div className="text-[11px] leading-snug">
+              <span className="text-gray-200 font-medium">Numbers support the story? {qa.numbers_support_story ? 'Yes' : 'No'}</span>
+              <span className="text-gray-500"> — {qa.numbers_support_reason}</span>
+            </div>
 
-          {qa.growth_rate_reasoning && (
-            <>
-              <SubHeading>Growth rate rationale</SubHeading>
-              <p className="text-[11px] text-gray-400 leading-snug">{qa.growth_rate_reasoning}</p>
-            </>
-          )}
-
-          {qa.catalysts?.length > 0 && (
-            <>
-              <SubHeading>Catalysts</SubHeading>
-              <div className="space-y-1">
-                {qa.catalysts.map((c: any, i: number) => (
-                  <div key={i} className="text-[11px] leading-snug">
-                    <span className="text-gray-200 font-medium">{c.title}</span>
-                    <span className="text-gray-600"> — {c.timing}</span>
-                    <span className="text-gray-500"> — {c.detail}</span>
-                  </div>
-                ))}
+            {qa.growth_rate_reasoning && (
+              <div className="text-[11px] leading-snug">
+                <span className="text-gray-200 font-medium">Growth rate rationale</span>
+                <span className="text-gray-500"> — {qa.growth_rate_reasoning}</span>
               </div>
-            </>
-          )}
+            )}
+
+            {qa.catalysts?.length > 0 && qa.catalysts.map((c: any, i: number) => (
+              <div key={i} className="text-[11px] leading-snug">
+                <span className="text-gray-200 font-medium">Catalyst — {c.title}</span>
+                <span className="text-gray-600"> — {c.timing}</span>
+                <span className="text-gray-500"> — {c.detail}</span>
+              </div>
+            ))}
+          </div>
         </Section>
       )}
 
@@ -358,6 +355,10 @@ export default function ThesisReportPage() {
             </div>
           ))}
         </div>
+      </Section>
+
+      <Section title="Thesis (DCF-Grounded)">
+        <p className="text-xs text-gray-300 leading-relaxed">{run.thesis_text}</p>
       </Section>
 
       <Section title={`DCF — ${driverLabel} Driver`}>
@@ -385,11 +386,7 @@ export default function ThesisReportPage() {
         </div>
       </Section>
 
-      <Section title="Adjusted Thesis (DCF-Grounded)">
-        <p className="text-xs text-gray-300 leading-relaxed">{run.thesis_text}</p>
-      </Section>
-
-      <Section title="Scenarios">
+      <Section title="Fair Value Scenarios">
         {SCENARIOS.map(([key, color]) => {
           const res = outputs[key]
           if (!res) return null
