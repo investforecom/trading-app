@@ -20,7 +20,7 @@ function Section({ title, children, avoidBreak = true, pageBreakAfter = false }:
 
 function ItemHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h4 className="text-[9px] font-semibold text-gray-500 uppercase tracking-wider border-b border-border/40 pb-0.5 mb-1 mt-2.5 first:mt-0">
+    <h4 className="text-sm font-semibold text-gray-100 uppercase tracking-wider border-b border-border pb-1.5 mb-2 mt-4 first:mt-0">
       {children}
     </h4>
   )
