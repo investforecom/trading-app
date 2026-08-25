@@ -22,26 +22,63 @@ function SubHeading({ children }: { children: React.ReactNode }) {
   return <h3 className="text-[11px] font-semibold text-gray-300 mt-2 mb-1 first:mt-0">{children}</h3>
 }
 
-function QualityGroup({ title, accent, verdictInfo, children }: {
-  title: string; accent: string; verdictInfo: { label: string; color: string }; children: React.ReactNode
+function QualityGroup({ title, description, accent, verdictInfo, children }: {
+  title: string; description: string; accent: string; verdictInfo: { label: string; color: string }; children: React.ReactNode
 }) {
   return (
     <div className="rounded-lg border border-border/50 overflow-hidden" style={{ borderTopColor: accent, borderTopWidth: 2 }}>
-      <div className="flex items-center justify-between px-2.5 py-1 border-b border-border/40">
-        <h3 className="text-[10px] font-semibold text-gray-200">{title}</h3>
-        <span className={`text-[9px] font-semibold uppercase tracking-wider ${verdictInfo.color}`}>{verdictInfo.label}</span>
+      <div className="px-2.5 pt-1.5 pb-1 border-b border-border/40">
+        <div className="flex items-center justify-between">
+          <h3 className="text-[10.5px] font-semibold text-gray-200">{title}</h3>
+          <span className={`text-[9px] font-semibold uppercase tracking-wider ${verdictInfo.color}`}>{verdictInfo.label}</span>
+        </div>
+        <p className="text-[8.5px] text-gray-600 leading-snug mt-0.5">{description}</p>
       </div>
-      <div className="px-2.5 py-0.5">{children}</div>
+      <div className="px-2.5 py-1">{children}</div>
     </div>
   )
 }
 
 function QLine({ label, value, rating }: { label: string; value: string; rating: Rating }) {
   return (
-    <div className="flex items-center justify-between gap-2 py-[2px] text-[9.5px] leading-tight">
+    <div className="flex items-center justify-between gap-2 py-[2.5px] text-[10px] leading-tight">
       <span className="text-gray-500 truncate">{label}</span>
       <span className={`font-semibold tabular-nums flex-shrink-0 ${RATING_TEXT[rating]}`}>{value}</span>
     </div>
+  )
+}
+
+function QStat({ label, value, rating }: { label: string; value: string; rating: Rating }) {
+  return (
+    <div className="flex-1 text-center">
+      <div className="text-[8px] text-gray-600 uppercase tracking-wide">{label}</div>
+      <div className={`text-[11px] font-bold tabular-nums ${RATING_TEXT[rating]}`}>{value}</div>
+    </div>
+  )
+}
+
+function QTable({ columns, rows }: { columns: string[]; rows: { label: string; cells: { value: string; rating: Rating }[] }[] }) {
+  return (
+    <table className="w-full text-[10px] border-collapse mb-1">
+      <thead>
+        <tr>
+          <th className="text-left font-normal text-gray-600 text-[8.5px] pb-0.5"></th>
+          {columns.map((c) => (
+            <th key={c} className="text-right font-normal text-gray-600 text-[8.5px] pb-0.5 pl-2">{c}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.label}>
+            <td className="text-gray-500 py-[2.5px] pr-2 whitespace-nowrap">{r.label}</td>
+            {r.cells.map((c, i) => (
+              <td key={i} className={`text-right font-semibold tabular-nums py-[2.5px] pl-2 ${RATING_TEXT[c.rating]}`}>{c.value}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   )
 }
 
@@ -182,29 +219,45 @@ export default function ThesisReportPage() {
       <Section title="Quality Screen" avoidBreak={false} pageBreakAfter>
         <div className="grid grid-cols-2 gap-2 mb-2">
           <QualityGroup title="Reliable growth" accent="#3b82f6"
+            description="Consistent growth across the whole income statement — not lumpy, not a black box."
             verdictInfo={verdict([rGrowth, rCagr, rGrossProfitYoy, rGrossProfitCagr, rOperatingIncomeYoy, rOperatingIncomeCagr, rNetIncomeYoy, rNetIncomeCagr])}>
-            <QLine label="Revenue YoY / CAGR" value={`${fmtPct(f.revenue_growth_yoy, true)} / ${fmtPct(f.revenue_cagr, true)}`} rating={rGrowth} />
-            <QLine label="Gross profit YoY / CAGR" value={`${fmtPct(f.gross_profit_yoy, true)} / ${fmtPct(f.gross_profit_cagr, true)}`} rating={rGrossProfitYoy} />
-            <QLine label="Op. income YoY / CAGR" value={`${fmtPct(f.operating_income_yoy, true)} / ${fmtPct(f.operating_income_cagr, true)}`} rating={rOperatingIncomeYoy} />
-            <QLine label="Net income YoY / CAGR" value={`${fmtPct(f.net_income_yoy, true)} / ${fmtPct(f.net_income_cagr, true)}`} rating={rNetIncomeYoy} />
+            <QTable columns={['YoY', 'CAGR']} rows={[
+              { label: 'Revenue', cells: [{ value: fmtPct(f.revenue_growth_yoy, true), rating: rGrowth }, { value: fmtPct(f.revenue_cagr, true), rating: rCagr }] },
+              { label: 'Gross Profit', cells: [{ value: fmtPct(f.gross_profit_yoy, true), rating: rGrossProfitYoy }, { value: fmtPct(f.gross_profit_cagr, true), rating: rGrossProfitCagr }] },
+              { label: 'Op. Income', cells: [{ value: fmtPct(f.operating_income_yoy, true), rating: rOperatingIncomeYoy }, { value: fmtPct(f.operating_income_cagr, true), rating: rOperatingIncomeCagr }] },
+              { label: 'Net Income', cells: [{ value: fmtPct(f.net_income_yoy, true), rating: rNetIncomeYoy }, { value: fmtPct(f.net_income_cagr, true), rating: rNetIncomeCagr }] },
+            ]} />
           </QualityGroup>
 
-          <QualityGroup title="Cash conversion" accent="#22d3ee" verdictInfo={verdict([rOcfYoy, rOcfCagr, rFcfYoy, rFcfCagr])}>
-            <QLine label="Op. cash flow YoY / CAGR" value={`${fmtPct(f.operating_cashflow_yoy, true)} / ${fmtPct(f.operating_cashflow_cagr, true)}`} rating={rOcfYoy} />
-            <QLine label="FCF YoY / CAGR" value={`${fmtPct(f.fcf_yoy, true)} / ${fmtPct(f.fcf_cagr, true)}`} rating={rFcfYoy} />
+          <QualityGroup title="Cash conversion" accent="#22d3ee"
+            description="Reported profit means little if it never shows up as cash."
+            verdictInfo={verdict([rOcfYoy, rOcfCagr, rFcfYoy, rFcfCagr])}>
+            <QTable columns={['YoY', 'CAGR']} rows={[
+              { label: 'Op. Cash Flow', cells: [{ value: fmtPct(f.operating_cashflow_yoy, true), rating: rOcfYoy }, { value: fmtPct(f.operating_cashflow_cagr, true), rating: rOcfCagr }] },
+              { label: 'Free Cash Flow', cells: [{ value: fmtPct(f.fcf_yoy, true), rating: rFcfYoy }, { value: fmtPct(f.fcf_cagr, true), rating: rFcfCagr }] },
+            ]} />
             <QLine label="Capex (latest FY)" value={fmtBig(f.capex_ttm)} rating="na" />
             <QLine label="Free cash flow (TTM)" value={fmtBig(f.free_cashflow)} rating="na" />
           </QualityGroup>
 
-          <QualityGroup title="Profitability & efficiency" accent="#34d399" verdictInfo={verdict([rGross, rOperating, rEbitda, rProfit, rFcf, rRoe, rRoa, rRoic])}>
-            <QLine label="Gross / operating margin" value={`${fmtPct(f.gross_margin)} / ${fmtPct(f.operating_margin)}`} rating={rGross} />
-            <QLine label="EBITDA / net margin" value={`${fmtPct(f.ebitda_margin)} / ${fmtPct(f.profit_margin)}`} rating={rEbitda} />
+          <QualityGroup title="Profitability & efficiency" accent="#34d399"
+            description="How much of every sales dollar turns into real profit and cash."
+            verdictInfo={verdict([rGross, rOperating, rEbitda, rProfit, rFcf, rRoe, rRoa, rRoic])}>
+            <QLine label="Gross margin" value={fmtPct(f.gross_margin)} rating={rGross} />
+            <QLine label="Operating margin" value={fmtPct(f.operating_margin)} rating={rOperating} />
+            <QLine label="EBITDA margin" value={fmtPct(f.ebitda_margin)} rating={rEbitda} />
+            <QLine label="Net margin" value={fmtPct(f.profit_margin)} rating={rProfit} />
             <QLine label="FCF margin" value={fmtPct(fcfMargin)} rating={rFcf} />
-            <QLine label="Return on equity / assets" value={`${fmtPct(f.return_on_equity)} / ${fmtPct(f.return_on_assets)}`} rating={rRoe} />
-            <QLine label="Return on invested capital" value={fmtPct(f.return_on_invested_capital)} rating={rRoic} />
+            <div className="flex items-stretch gap-1 mt-1.5 pt-1.5 border-t border-border/30">
+              <QStat label="ROE" value={fmtPct(f.return_on_equity)} rating={rRoe} />
+              <QStat label="ROA" value={fmtPct(f.return_on_assets)} rating={rRoa} />
+              <QStat label="ROIC" value={fmtPct(f.return_on_invested_capital)} rating={rRoic} />
+            </div>
           </QualityGroup>
 
-          <QualityGroup title="Balance sheet" accent="#fb923c" verdictInfo={verdict([rDebtToEquity, rCurrentRatio, rNetDebtEbitda, rInterestCoverage])}>
+          <QualityGroup title="Balance sheet" accent="#fb923c"
+            description="How much debt the business carries, and how easily it could cover it."
+            verdictInfo={verdict([rDebtToEquity, rCurrentRatio, rNetDebtEbitda, rInterestCoverage])}>
             <QLine label="Net debt (cash if neg.)" value={fmtBig(f.net_debt)} rating="na" />
             <QLine label="Net debt / EBITDA" value={fmtRatio(f.net_debt_to_ebitda)} rating={rNetDebtEbitda} />
             <QLine label="Debt / equity" value={f.debt_to_equity_pct != null ? `${f.debt_to_equity_pct.toFixed(1)}%` : '—'} rating={rDebtToEquity} />
@@ -212,16 +265,25 @@ export default function ThesisReportPage() {
             <QLine label="Interest coverage" value={f.interest_coverage != null ? fmtRatio(f.interest_coverage) : 'negligible debt'} rating={rInterestCoverage} />
           </QualityGroup>
 
-          <QualityGroup title="Dilution" accent="#f59e0b" verdictInfo={verdict([rDilutionYoy, rDilutionCagr])}>
-            <QLine label="Shares out. YoY / CAGR" value={`${fmtPct(f.shares_yoy, true)} / ${fmtPct(f.shares_cagr, true)}`} rating={rDilutionYoy} />
+          <QualityGroup title="Dilution" accent="#f59e0b"
+            description="Is your ownership stake shrinking (dilution) or growing (buybacks)?"
+            verdictInfo={verdict([rDilutionYoy, rDilutionCagr])}>
+            <QTable columns={['YoY', 'CAGR']} rows={[
+              { label: 'Shares Outstanding', cells: [{ value: fmtPct(f.shares_yoy, true), rating: rDilutionYoy }, { value: fmtPct(f.shares_cagr, true), rating: rDilutionCagr }] },
+            ]} />
             <QLine label="Insider ownership" value={fmtPct(f.insider_pct)} rating="na" />
             <QLine label="Institutional ownership" value={fmtPct(f.institution_pct)} rating="na" />
           </QualityGroup>
 
-          <QualityGroup title="Valuation" accent="#a78bfa" verdictInfo={verdict([rPeg, rForwardPe, rTrailingPe, rEvEbitda, rPs, rPb, rUpside])}>
-            <QLine label="PEG / Fwd P/E" value={`${f.peg_ratio != null ? f.peg_ratio.toFixed(2) : '—'} / ${fmtRatio(f.forward_pe)}`} rating={rPeg} />
-            <QLine label="Trailing P/E / EV-EBITDA" value={`${fmtRatio(f.trailing_pe)} / ${fmtRatio(f.ev_to_ebitda)}`} rating={rTrailingPe} />
-            <QLine label="P/S / P/B" value={`${fmtRatio(f.price_to_sales)} / ${fmtRatio(f.price_to_book)}`} rating={rPs} />
+          <QualityGroup title="Valuation" accent="#a78bfa"
+            description="Is the stock cheap or expensive today?"
+            verdictInfo={verdict([rPeg, rForwardPe, rTrailingPe, rEvEbitda, rPs, rPb, rUpside])}>
+            <QLine label="PEG ratio" value={f.peg_ratio != null ? f.peg_ratio.toFixed(2) : '—'} rating={rPeg} />
+            <QLine label="Forward P/E" value={fmtRatio(f.forward_pe)} rating={rForwardPe} />
+            <QLine label="Trailing P/E" value={fmtRatio(f.trailing_pe)} rating={rTrailingPe} />
+            <QLine label="EV / EBITDA" value={fmtRatio(f.ev_to_ebitda)} rating={rEvEbitda} />
+            <QLine label="Price / Sales" value={fmtRatio(f.price_to_sales)} rating={rPs} />
+            <QLine label="Price / Book" value={fmtRatio(f.price_to_book)} rating={rPb} />
             <QLine label="Analyst target upside" value={fmtPct(analystUpside, true)} rating={rUpside} />
           </QualityGroup>
         </div>
