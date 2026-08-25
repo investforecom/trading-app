@@ -18,6 +18,14 @@ function Section({ title, children, avoidBreak = true, pageBreakAfter = false }:
   )
 }
 
+function ItemHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <h4 className="text-[9px] font-semibold text-gray-500 uppercase tracking-wider border-b border-border/40 pb-0.5 mb-1 mt-2.5 first:mt-0">
+      {children}
+    </h4>
+  )
+}
+
 function QualityGroup({ title, description, accent, verdictInfo, children }: {
   title: string; description: string; accent: string; verdictInfo: { label: string; color: string }; children: React.ReactNode
 }) {
@@ -311,45 +319,50 @@ export default function ThesisReportPage() {
 
       {qa && (
         <Section title="Business Fundamentals" avoidBreak={false}>
-          <div className="space-y-1.5">
-            {f.summary && (
-              <div className="text-[11px] leading-snug">
-                <span className="text-gray-200 font-medium">The Business</span>
-                <span className="text-gray-500"> — {f.summary}</span>
-              </div>
-            )}
+          {f.summary && (
+            <p className="text-[11px] text-gray-500 leading-snug mb-2">{f.summary}</p>
+          )}
 
-            <div className="text-[11px] leading-snug">
-              <span className="text-gray-200 font-medium">Demand</span>
-              <span className="text-gray-500"> — {qa.demand}</span>
-            </div>
-
-            <div className="text-[11px] leading-snug">
-              <span className="text-gray-200 font-medium">Moat — {qa.moat_trend}</span>
-              <span className="text-gray-500"> — {qa.moat}</span>
-              {qa.moat_trend_reason && <span className="text-gray-600"> ({qa.moat_trend_reason})</span>}
-            </div>
-
-            <div className="text-[11px] leading-snug">
-              <span className="text-gray-200 font-medium">Numbers support the story? {qa.numbers_support_story ? 'Yes' : 'No'}</span>
-              <span className="text-gray-500"> — {qa.numbers_support_reason}</span>
-            </div>
-
-            {qa.growth_rate_reasoning && (
-              <div className="text-[11px] leading-snug">
-                <span className="text-gray-200 font-medium">Growth rate rationale</span>
-                <span className="text-gray-500"> — {qa.growth_rate_reasoning}</span>
-              </div>
-            )}
-
-            {qa.catalysts?.length > 0 && qa.catalysts.map((c: any, i: number) => (
-              <div key={i} className="text-[11px] leading-snug">
-                <span className="text-gray-200 font-medium">Catalyst — {c.title}</span>
-                <span className="text-gray-600"> — {c.timing}</span>
-                <span className="text-gray-500"> — {c.detail}</span>
-              </div>
-            ))}
+          <div>
+            <ItemHeading>Demand</ItemHeading>
+            <p className="text-[11px] text-gray-500 leading-snug">{qa.demand}</p>
           </div>
+
+          <div>
+            <ItemHeading>Moat — {qa.moat_trend}</ItemHeading>
+            <p className="text-[11px] text-gray-500 leading-snug">{qa.moat}</p>
+            {qa.moat_trend_reason && <p className="text-[10px] text-gray-600 mt-0.5">{qa.moat_trend_reason}</p>}
+          </div>
+
+          <div>
+            <ItemHeading>Numbers Supporting the Story</ItemHeading>
+            <p className="text-[11px] text-gray-500 leading-snug">
+              <span className={`font-semibold ${qa.numbers_support_story ? 'text-emerald-500' : 'text-red-500'}`}>{qa.numbers_support_story ? 'Yes' : 'No'}</span>
+              {' — '}{qa.numbers_support_reason}
+            </p>
+          </div>
+
+          {qa.growth_rate_reasoning && (
+            <div>
+              <ItemHeading>Growth Rate</ItemHeading>
+              <p className="text-[11px] text-gray-500 leading-snug">{qa.growth_rate_reasoning}</p>
+            </div>
+          )}
+
+          {qa.catalysts?.length > 0 && (
+            <div>
+              <ItemHeading>Catalysts</ItemHeading>
+              <div className="space-y-1">
+                {qa.catalysts.map((c: any, i: number) => (
+                  <div key={i} className="text-[11px] leading-snug">
+                    <span className="text-gray-300 font-medium">{c.title}</span>
+                    <span className="text-gray-600"> — {c.timing}</span>
+                    <span className="text-gray-500"> — {c.detail}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </Section>
       )}
 
