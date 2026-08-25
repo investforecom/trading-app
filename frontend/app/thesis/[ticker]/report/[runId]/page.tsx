@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
-import { fmtUsd, fmtBig, fmtPct, fmtRatio, vsCurrentPct, summarizeBusiness } from '@/lib/format'
+import { fmtUsd, fmtBig, fmtPct, fmtRatio, vsCurrentPct } from '@/lib/format'
 import { type Rating, RATING_TEXT, rateAbove, rateBelow, rateDilution, rateRelative, verdict } from '@/lib/quality'
 import { GroupedBarChart } from '@/components/charts/grouped-bar-chart'
 
@@ -320,7 +320,7 @@ export default function ThesisReportPage() {
       {qa && (
         <Section title="Business Fundamentals" avoidBreak={false}>
           {f.summary && (
-            <p className="text-[11px] text-gray-500 leading-snug mb-2">{summarizeBusiness(f.summary)}</p>
+            <p className="text-[11px] text-gray-500 leading-snug mb-2 line-clamp-6">{f.summary}</p>
           )}
 
           <div>
