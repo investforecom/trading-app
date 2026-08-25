@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
-import { fmtUsd, fmtBig, fmtPct, fmtRatio, vsCurrentPct } from '@/lib/format'
+import { fmtUsd, fmtBig, fmtPct, fmtRatio, vsCurrentPct, summarizeBusiness } from '@/lib/format'
 import { type Rating, RATING_TEXT, rateAbove, rateBelow, rateDilution, rateRelative, verdict } from '@/lib/quality'
 import { GroupedBarChart } from '@/components/charts/grouped-bar-chart'
 
@@ -20,7 +20,7 @@ function Section({ title, children, avoidBreak = true, pageBreakAfter = false }:
 
 function ItemHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h4 className="text-sm font-semibold text-gray-100 uppercase tracking-wider border-b border-border pb-1.5 mb-2 mt-4 first:mt-0">
+    <h4 className="text-sm font-semibold text-gray-100 uppercase tracking-wider border-b border-border pb-1.5 mb-2 mt-4">
       {children}
     </h4>
   )
@@ -320,7 +320,7 @@ export default function ThesisReportPage() {
       {qa && (
         <Section title="Business Fundamentals" avoidBreak={false}>
           {f.summary && (
-            <p className="text-[11px] text-gray-500 leading-snug mb-2">{f.summary}</p>
+            <p className="text-[11px] text-gray-500 leading-snug mb-2">{summarizeBusiness(f.summary)}</p>
           )}
 
           <div>
@@ -352,15 +352,15 @@ export default function ThesisReportPage() {
           {qa.catalysts?.length > 0 && (
             <div>
               <ItemHeading>Catalysts</ItemHeading>
-              <div className="space-y-1">
+              <ul className="space-y-1 list-disc pl-3.5 marker:text-gray-600">
                 {qa.catalysts.map((c: any, i: number) => (
-                  <div key={i} className="text-[11px] leading-snug">
+                  <li key={i} className="text-[11px] leading-snug">
                     <span className="text-gray-300 font-medium">{c.title}</span>
                     <span className="text-gray-600"> — {c.timing}</span>
                     <span className="text-gray-500"> — {c.detail}</span>
-                  </div>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
           )}
         </Section>

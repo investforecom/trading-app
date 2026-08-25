@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
 import { runDcf, runScenario, impliedMultipleFromGordon, impliedGrowthFromMultiple } from '@/lib/dcf'
-import { fmtUsd, fmtBig, fmtPct, fmtRatio, fmtShares, upsideColor, vsCurrentPct } from '@/lib/format'
+import { fmtUsd, fmtBig, fmtPct, fmtRatio, fmtShares, upsideColor, vsCurrentPct, summarizeBusiness } from '@/lib/format'
 import { type Rating, RATING_DOT, RATING_TEXT, rateAbove, rateBelow, rateDilution, rateRelative, verdict } from '@/lib/quality'
 import { GroupedBarChart } from '@/components/charts/grouped-bar-chart'
 
@@ -360,7 +360,7 @@ function ThesisStage({ ticker, fundamentals, onBack, onSkipToDcf, onThesisChange
       {fundamentals?.summary && (
         <div className="bg-card border border-border rounded-xl p-4">
           <h3 className="text-xs font-semibold text-gray-300 mb-1.5">About the Business</h3>
-          <p className="text-sm text-gray-400 leading-relaxed">{fundamentals.summary}</p>
+          <p className="text-sm text-gray-400 leading-relaxed">{summarizeBusiness(fundamentals.summary)}</p>
         </div>
       )}
 
